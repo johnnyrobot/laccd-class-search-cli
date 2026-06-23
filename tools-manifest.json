@@ -1,0 +1,64 @@
+{
+  "api_name": "laccd-class-search",
+  "base_url": "https://mycollege-guest.laccd.edu",
+  "description": "Search the Los Angeles Community College District class schedule (9 colleges) from the PeopleSoft guest portal",
+  "mcp_ready": "full",
+  "http_transport": "standard",
+  "auth": {
+    "type": "none"
+  },
+  "required_headers": [
+    {
+      "name": "User-Agent",
+      "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    }
+  ],
+  "tools": [
+    {
+      "name": "sections_search",
+      "description": "Search class sections by college, term, and subject. Required: college, term, subject. Optional: catalog. Returns array of Section.",
+      "method": "GET",
+      "path": "/psc/classsearchguest/EMPLOYEE/HRMS/c/COMMUNITY_ACCESS.CLASS_SEARCH.GBL",
+      "no_auth": true,
+      "params": [
+        {
+          "name": "college",
+          "wire_name": "Campus",
+          "type": "string",
+          "location": "query",
+          "description": "College campus code (e.g. LAPC, ELAC, LACC). Run 'colleges' to list.",
+          "required": true,
+          "aliases": [
+            "campus"
+          ]
+        },
+        {
+          "name": "term",
+          "wire_name": "strm",
+          "type": "string",
+          "location": "query",
+          "description": "Term code (e.g. 2268 = Fall 2026). Run 'terms' to list active terms.",
+          "required": true
+        },
+        {
+          "name": "subject",
+          "wire_name": "subj",
+          "type": "string",
+          "location": "query",
+          "description": "Subject code (e.g. MATH, ENGL, CHEM).",
+          "required": true,
+          "aliases": [
+            "subj"
+          ]
+        },
+        {
+          "name": "catalog",
+          "wire_name": "catalogid",
+          "type": "string",
+          "location": "query",
+          "description": "Catalog number to narrow to one course (e.g. 261). Zero-padded to 3 digits automatically."
+        }
+      ]
+    }
+  ]
+}

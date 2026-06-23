@@ -1,0 +1,27 @@
+{
+  "manifest_version": "0.3",
+  "name": "laccd-class-search-pp-mcp",
+  "display_name": "LACCD Class Search",
+  "version": "0.0.0",
+  "description": "Search every Los Angeles Community College District class from your terminal, with a local SQLite mirror, offline full-text search, cross-college comparison, and free unlimited seat-watch.",
+  "author": {
+    "name": "CLI Printing Press"
+  },
+  "license": "Apache-2.0",
+  "server": {
+    "type": "binary",
+    "entry_point": "bin/laccd-class-search-pp-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/bin/laccd-class-search-pp-mcp",
+      "args": []
+    }
+  },
+  "compatibility": {
+    "claude_desktop": ">=1.0.0",
+    "platforms": [
+      "darwin",
+      "linux",
+      "win32"
+    ]
+  }
+}

@@ -1,0 +1,360 @@
+# LACCD Class Search CLI
+
+**Search every Los Angeles Community College District class from your terminal, with a local SQLite mirror, offline full-text search, cross-college comparison, and free unlimited seat-watch.**
+
+A scriptable, agent-native CLI over the LACCD MyCollege guest class-search portal. Sync any college, term, and subject into a local database, then search and filter offline with `--json` output. Beyond the portal: `compare-colleges` finds an open seat for the same course across all 9 colleges, `watch` tracks a section's seats over time, `ccn` bridges the new AB1111 course renumbering, and `schedule build` checks a set of sections for time conflicts.
+
+Learn more at [LACCD Class Search](https://mycollege-guest.laccd.edu).
+
+Created by [@johnnyrobot](https://github.com/johnnyrobot).
+
+## Install
+
+The recommended path installs both the `laccd-class-search-pp-cli` binary and the `pp-laccd-class-search` agent skill (Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, and other agents supported by the upstream [`skills`](https://github.com/vercel-labs/skills) CLI) in one shot:
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search
+```
+
+For CLI only (no skill):
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search --cli-only
+```
+
+For skill only — installs the skill into the same agents as the default command above, but skips the CLI binary (use this to update or reinstall just the skill):
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search --skill-only
+```
+
+To constrain the skill install to one or more specific agents (repeatable — agent names match the [`skills`](https://github.com/vercel-labs/skills) CLI):
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search --agent claude-code
+npx -y @mvanhorn/printing-press-library install laccd-class-search --agent claude-code --agent codex
+```
+
+### Without Node (Go fallback)
+
+If `npx` isn't available (no Node, offline), install the CLI directly via Go (requires Go 1.26.4 or newer):
+
+```bash
+go install github.com/mvanhorn/printing-press-library/library/education/laccd-class-search/cmd/laccd-class-search-pp-cli@latest
+```
+
+This installs the CLI only — no skill.
+
+### Pre-built binary
+
+Download a pre-built binary for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/laccd-class-search-current). On macOS, clear the Gatekeeper quarantine: `xattr -d com.apple.quarantine <binary>`. On Unix, mark it executable: `chmod +x <binary>`.
+
+<!-- pp-hermes-install-anchor -->
+## Install for Hermes
+
+Install the CLI binary first. The installer writes binaries to a per-user managed bin directory by default: `$HOME/.local/bin` on macOS/Linux and `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows.
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search --cli-only
+```
+
+Then install the focused Hermes skill.
+
+From the Hermes CLI:
+
+```bash
+hermes skills install mvanhorn/printing-press-library/cli-skills/pp-laccd-class-search --force
+```
+
+Inside a Hermes chat session:
+
+```bash
+/skills install mvanhorn/printing-press-library/cli-skills/pp-laccd-class-search --force
+```
+
+Restart the Hermes session or gateway if the newly installed skill is not visible immediately.
+
+## Install for OpenClaw
+Install both the CLI binary and the focused OpenClaw skill. The installer defaults binaries to a per-user bin directory (`$HOME/.local/bin` on macOS/Linux, `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows):
+
+```bash
+npx -y @mvanhorn/printing-press-library install laccd-class-search --agent openclaw
+```
+
+Restart the OpenClaw session or gateway if the newly installed skill is not visible immediately.
+
+## Use with Claude Desktop
+
+This CLI ships an [MCPB](https://github.com/modelcontextprotocol/mcpb) bundle — Claude Desktop's standard format for one-click MCP extension installs (no JSON config required).
+
+To install:
+
+1. Download the `.mcpb` for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/laccd-class-search-current).
+2. Double-click the `.mcpb` file. Claude Desktop opens and walks you through the install.
+
+Requires Claude Desktop 1.0.0 or later. Pre-built bundles ship for macOS Apple Silicon (`darwin-arm64`) and Windows (`amd64`, `arm64`); for other platforms, use the manual config below.
+
+<details>
+<summary>Manual JSON config (advanced)</summary>
+
+If you can't use the MCPB bundle (older Claude Desktop, unsupported platform), install the MCP binary and configure it manually.
+
+
+```bash
+go install github.com/mvanhorn/printing-press-library/library/education/laccd-class-search/cmd/laccd-class-search-pp-mcp@latest
+```
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "laccd-class-search": {
+      "command": "laccd-class-search-pp-mcp"
+    }
+  }
+}
+```
+
+</details>
+
+## Authentication
+
+No login or API key. The portal is the public guest class search; the CLI establishes a PeopleSoft guest session automatically (a cookie warm-up) on each run.
+
+## Quick Start
+
+```bash
+# confirm the portal is reachable and the session warm-up works
+laccd-class-search-pp-cli doctor --dry-run
+
+# see the 9 college codes (LAPC, ELAC, LACC, ...)
+laccd-class-search-pp-cli colleges
+
+# list the currently-active term codes (e.g. 2268 = Fall 2026)
+laccd-class-search-pp-cli terms --college LAPC
+
+# find open MATH sections at Pierce for Fall 2026
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --open
+
+# exact seats and waitlist for one section
+laccd-class-search-pp-cli section 13079
+
+```
+
+## Unique Features
+
+These capabilities aren't available in any other tool for this API.
+
+### Cross-college intelligence
+- **`compare-colleges`** — Compare one course across all 9 LACCD colleges and see open-seat counts side by side.
+
+  _Reach for this when a course is full at one college and you need to find any LACCD college that still has an open seat._
+
+  ```bash
+  laccd-class-search-pp-cli compare-colleges --subject MATH --catalog 261 --term 2268 --agent
+  ```
+- **`ccn`** — Resolve a legacy catalog number to its new AB1111 Common Course Number (and back), then list sections under both.
+
+  _Reach for this when a course number returns nothing because it was renumbered under California's Common Course Numbering._
+
+  ```bash
+  laccd-class-search-pp-cli ccn MATH 261 --college LAPC --term 2268 --agent
+  ```
+
+### Seat availability
+- **`watch`** — Fetch a section's current seats and waitlist and show the change since the last check.
+
+  _Reach for this to monitor whether a specific section is gaining or losing open seats during a registration window._
+
+  ```bash
+  laccd-class-search-pp-cli watch 13079 --college LAPC --term 2268 --subject MATH --agent
+  ```
+- **`changed`** — Diff the current mirror against the previous sync to list new sections, dropped sections, and open-to-closed flips.
+
+  _Reach for this to see what moved in the schedule since you last looked, without re-reading every section._
+
+  ```bash
+  laccd-class-search-pp-cli changed --since 24h --agent
+  ```
+
+### Schedule planning
+- **`schedule build`** — Given a set of class numbers, report the conflict-free combination or the exact overlapping pairs.
+
+  _Reach for this to validate that a candidate set of sections actually fits together before registering._
+
+  ```bash
+  laccd-class-search-pp-cli schedule build 13079 14512 15003 --agent
+  ```
+
+## Recipes
+
+
+### Find an open seat for a full course anywhere in the district
+
+```bash
+laccd-class-search-pp-cli compare-colleges --subject MATH --catalog 261 --term 2268
+```
+
+Shows every LACCD college offering MATH 261 this term with open-seat counts side by side.
+
+### Narrow a large result set with agent-native field selection
+
+```bash
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --agent --select sections.class_nbr,sections.section,sections.status,sections.days_times,sections.instructor
+```
+
+Returns only the fields an agent needs from a deeply nested section list, instead of the full payload.
+
+### Watch a section for an opening
+
+```bash
+laccd-class-search-pp-cli watch 13079 --agent
+```
+
+Fetches current seats/waitlist for class number 13079 and reports the change since the last check.
+
+### Check a candidate schedule for time conflicts
+
+```bash
+laccd-class-search-pp-cli schedule build 13079 14512 15003
+```
+
+Reports whether the three sections fit together or names the overlapping pairs.
+
+### See what changed in the schedule since yesterday
+
+```bash
+laccd-class-search-pp-cli changed --since 24h
+```
+
+Lists new sections, dropped sections, and open-to-closed flips since the previous sync.
+
+## Usage
+
+Run `laccd-class-search-pp-cli --help` for the full command reference and flag list.
+
+## Paths & environment variables
+
+This CLI separates local files into four path kinds:
+
+| Kind | Contents |
+|------|----------|
+| `config` | User-editable settings such as `config.toml` and saved profiles |
+| `data` | Durable local data such as `data.db` |
+| `state` | Runtime state such as persisted queries, jobs, and `teach.log` |
+| `cache` | Regenerable HTTP/cache files |
+
+Each kind resolves independently. The ladder is:
+
+1. Per-kind env var: `LACCD_CLASS_SEARCH_CONFIG_DIR`, `LACCD_CLASS_SEARCH_DATA_DIR`, `LACCD_CLASS_SEARCH_STATE_DIR`, or `LACCD_CLASS_SEARCH_CACHE_DIR`
+2. `--home <dir>` for this invocation
+3. `LACCD_CLASS_SEARCH_HOME` for a flat relocated root
+4. XDG env vars: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`
+5. Platform defaults matching existing installs
+
+For containers and agent sandboxes, prefer a single relocated root:
+
+```bash
+export LACCD_CLASS_SEARCH_HOME=/srv/laccd-class-search
+laccd-class-search-pp-cli doctor
+```
+
+Under `LACCD_CLASS_SEARCH_HOME=/srv/laccd-class-search`, the four dirs resolve to `/srv/laccd-class-search/config`, `/srv/laccd-class-search/data`, `/srv/laccd-class-search/state`, and `/srv/laccd-class-search/cache`.
+
+MCP servers do not receive CLI flags from the host. Put relocation in the host `env` block:
+
+```json
+{
+  "mcpServers": {
+    "laccd-class-search": {
+      "command": "laccd-class-search-pp-mcp",
+      "env": {
+        "LACCD_CLASS_SEARCH_HOME": "/srv/laccd-class-search"
+      }
+    }
+  }
+}
+```
+
+Precedence matters in fleets: an ambient per-kind variable such as `LACCD_CLASS_SEARCH_DATA_DIR` overrides an explicit `--home` for that kind. Use `LACCD_CLASS_SEARCH_HOME` or the per-kind variables for durable fleet relocation; treat `--home` as the weaker per-invocation lever.
+
+Relocation is one-way. Unsetting `LACCD_CLASS_SEARCH_HOME` does not move files back to platform defaults, and `doctor` cannot find files left under a former root. Move the files manually before unsetting relocation variables.
+
+Existing installs keep working because the platform-default rung matches the legacy layout. Run `laccd-class-search-pp-cli doctor --fail-on warn` to check path warnings in automation.
+
+## Commands
+
+### search
+
+Search LACCD class sections by college, term, and subject, with offline mirror, filters, and cross-college comparison.
+
+- **`laccd-class-search-pp-cli search`** - Search class sections by college, term, and subject
+
+
+## Output Formats
+
+```bash
+# Human-readable table (default in terminal, JSON when piped)
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH
+
+# JSON for scripting and agents
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --json
+
+# Filter to specific fields
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --json --select id,name,status
+
+# Dry run — show the request without sending
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --dry-run
+
+# Agent mode — JSON + compact + no prompts in one flag
+laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --agent
+```
+
+## Agent Usage
+
+This CLI is designed for AI agent consumption:
+
+- **Non-interactive** - never prompts, every input is a flag
+- **Pipeable** - `--json` output to stdout, errors to stderr
+- **Filterable** - `--select id,name` returns only fields you need
+- **Previewable** - `--dry-run` shows the request without sending
+- **Read-only by default** - this CLI does not create, update, delete, publish, send, or mutate remote resources
+- **Offline-friendly** - sync/search commands can use the local SQLite store when available
+- **Agent-safe by default** - no colors or formatting unless `--human-friendly` is set
+
+Exit codes: `0` success, `2` usage error, `3` not found, `5` API error, `7` rate limited, `10` config error.
+
+## Health Check
+
+```bash
+laccd-class-search-pp-cli doctor
+```
+
+Verifies configuration and connectivity to the API.
+
+## Configuration
+
+Run `laccd-class-search-pp-cli doctor` to see the resolved config, data, state, and cache directories. The platform-default config path is `~/.config/laccd-class-search-pp-cli/config.toml`; `--home`, `LACCD_CLASS_SEARCH_HOME`, and per-kind env vars can relocate it.
+
+Static request headers can be configured under `headers`; per-command header overrides take precedence.
+
+## Troubleshooting
+**Not found errors (exit code 3)**
+- Check the resource ID is correct
+- Run the `list` command to see available items
+
+### API-specific
+- **Search returns nothing for a course you know exists** — The course may have been renumbered under AB1111 — run `laccd-class-search-pp-cli ccn <subject> <number>` to find both the legacy and Common Course Number.
+- **'session expired' or a redirect to a cookie page** — The PeopleSoft guest session timed out; just re-run the command — the client re-establishes the session automatically.
+- **A term code is rejected** — Only currently-active terms are searchable; run `laccd-class-search-pp-cli terms --college <code>` to list valid term codes.
+
+## Sources & Inspiration
+
+This CLI was built by studying these projects and resources:
+
+- [**OpenCourseSearch-API**](https://github.com/abstrctn/OpenCourseSearch-API) — Python
+- [**find-staff**](https://github.com/jaredfrees/find-staff) — Python
+- [**ScheduleStorm-Server**](https://github.com/Step7750/ScheduleStorm-Server) — Python
+
+Generated by [CLI Printing Press](https://github.com/mvanhorn/cli-printing-press)

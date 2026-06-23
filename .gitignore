@@ -1,0 +1,16 @@
+# Compiled binaries
+/laccd-class-search-pp-cli
+/laccd-class-search-pp-mcp
+# Build artifacts
+/build/
+/dist/
+*.mcpb
+# Local SQLite mirror
+*.db
+*.db-wal
+*.db-shm
+# Printing Press run metadata
+/.printing-press*.json
+/dogfood-results.json
+/apify-actor-audit-report.json
+/.manuscripts/

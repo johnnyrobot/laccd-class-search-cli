@@ -1,0 +1,51 @@
+version: 2
+project_name: laccd-class-search-pp-cli
+changelog:
+  disable: true
+builds:
+  - id: laccd-class-search-pp-cli
+    main: ./cmd/laccd-class-search-pp-cli
+    binary: laccd-class-search-pp-cli
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X laccd-class-search-pp-cli/internal/cli.version={{ .Version }}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+      - windows_arm64
+  - id: laccd-class-search-pp-mcp
+    main: ./cmd/laccd-class-search-pp-mcp
+    binary: laccd-class-search-pp-mcp
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    targets:
+      - darwin_amd64
+      - darwin_arm64
+      - linux_amd64
+      - linux_arm64
+      - windows_amd64
+      - windows_arm64
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+brews:
+  - name: laccd-class-search-pp-cli
+    repository:
+      owner: johnnyrobot
+      name: homebrew-tap
+    homepage: "https://github.com/johnnyrobot/laccd-class-search-pp-cli"
+    description: "Search every Los Angeles Community College District class from your terminal, with a local SQLite mirror, offline full-text search, cross-college comparison, and free unlimited seat-watch."
+    install: |
+      bin.install "laccd-class-search-pp-cli"
+      bin.install "laccd-class-search-pp-mcp"

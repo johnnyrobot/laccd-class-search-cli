@@ -1,0 +1,99 @@
+name: laccd-class-search
+description: "Search the Los Angeles Community College District class schedule (9 colleges) from the PeopleSoft guest portal"
+version: "0.1.0"
+category: education
+base_url: "https://mycollege-guest.laccd.edu"
+http_transport: standard
+health_check_path: "/psc/classsearchguest/EMPLOYEE/HRMS/c/COMMUNITY_ACCESS.CLASS_SEARCH.GBL"
+cli_description: "Search every LACCD college's class schedule from your terminal, with a local SQLite mirror, offline search, cross-college comparison, and free seat-watch."
+
+required_headers:
+  - name: User-Agent
+    value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+auth:
+  type: none
+
+config:
+  format: toml
+  path: "~/.config/laccd-class-search-pp-cli/config.toml"
+
+resources:
+  sections:
+    description: "Class sections from the LACCD guest class search"
+    endpoints:
+      search:
+        method: GET
+        path: "/psc/classsearchguest/EMPLOYEE/HRMS/c/COMMUNITY_ACCESS.CLASS_SEARCH.GBL"
+        description: "Search class sections by college, term, and subject"
+        response_format: html
+        html_extract:
+          mode: page
+        params:
+          - name: Campus
+            flag_name: college
+            aliases: [campus]
+            type: string
+            required: true
+            description: "College campus code (e.g. LAPC, ELAC, LACC). Run 'colleges' to list."
+          - name: strm
+            flag_name: term
+            type: string
+            required: true
+            description: "Term code (e.g. 2268 = Fall 2026). Run 'terms' to list active terms."
+          - name: subj
+            flag_name: subject
+            aliases: [subj]
+            type: string
+            required: true
+            description: "Subject code (e.g. MATH, ENGL, CHEM)."
+          - name: catalogid
+            flag_name: catalog
+            type: string
+            required: false
+            description: "Catalog number to narrow to one course (e.g. 261). Zero-padded to 3 digits automatically."
+        response:
+          type: array
+          item: Section
+
+types:
+  Section:
+    fields:
+      - name: class_nbr
+        type: string
+      - name: college
+        type: string
+      - name: college_name
+        type: string
+      - name: term
+        type: string
+      - name: term_label
+        type: string
+      - name: subject
+        type: string
+      - name: catalog
+        type: string
+      - name: course
+        type: string
+      - name: title
+        type: string
+      - name: section
+        type: string
+      - name: component
+        type: string
+      - name: session
+        type: string
+      - name: days_times
+        type: string
+      - name: room
+        type: string
+      - name: instructor
+        type: string
+      - name: start_date
+        type: string
+      - name: end_date
+        type: string
+      - name: status
+        type: string
+      - name: instruction_mode
+        type: string
