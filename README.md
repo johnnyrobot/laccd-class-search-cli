@@ -10,98 +10,59 @@ Created by [@johnnyrobot](https://github.com/johnnyrobot).
 
 ## Install
 
-The recommended path installs both the `laccd-class-search-pp-cli` binary and the `pp-laccd-class-search` agent skill (Claude Code, Codex, Cursor, Gemini CLI, GitHub Copilot, and other agents supported by the upstream [`skills`](https://github.com/vercel-labs/skills) CLI) in one shot:
+`laccd-class-search-pp-cli` is all you need. The separate `laccd-class-search-pp-mcp` server is only for chat apps that can't run shell commands — see [Use with Claude Desktop](#use-with-claude-desktop).
+
+### Go install
+
+Requires Go 1.26.4 or newer:
 
 ```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search
+go install github.com/johnnyrobot/laccd-class-search-cli/cmd/laccd-class-search-pp-cli@latest
 ```
 
-For CLI only (no skill):
+To also install the MCP server binary:
 
 ```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search --cli-only
+go install github.com/johnnyrobot/laccd-class-search-cli/cmd/laccd-class-search-pp-mcp@latest
 ```
-
-For skill only — installs the skill into the same agents as the default command above, but skips the CLI binary (use this to update or reinstall just the skill):
-
-```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search --skill-only
-```
-
-To constrain the skill install to one or more specific agents (repeatable — agent names match the [`skills`](https://github.com/vercel-labs/skills) CLI):
-
-```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search --agent claude-code
-npx -y @mvanhorn/printing-press-library install laccd-class-search --agent claude-code --agent codex
-```
-
-### Without Node (Go fallback)
-
-If `npx` isn't available (no Node, offline), install the CLI directly via Go (requires Go 1.26.4 or newer):
-
-```bash
-go install github.com/mvanhorn/printing-press-library/library/education/laccd-class-search/cmd/laccd-class-search-pp-cli@latest
-```
-
-This installs the CLI only — no skill.
 
 ### Pre-built binary
 
-Download a pre-built binary for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/laccd-class-search-current). On macOS, clear the Gatekeeper quarantine: `xattr -d com.apple.quarantine <binary>`. On Unix, mark it executable: `chmod +x <binary>`.
+Download a binary for your platform from the [latest release](https://github.com/johnnyrobot/laccd-class-search-cli/releases/latest).
 
-<!-- pp-hermes-install-anchor -->
-## Install for Hermes
-
-Install the CLI binary first. The installer writes binaries to a per-user managed bin directory by default: `$HOME/.local/bin` on macOS/Linux and `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows.
+On macOS, clear the Gatekeeper quarantine after downloading:
 
 ```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search --cli-only
+xattr -d com.apple.quarantine laccd-class-search-pp-cli
 ```
 
-Then install the focused Hermes skill.
-
-From the Hermes CLI:
+On Unix, mark it executable:
 
 ```bash
-hermes skills install mvanhorn/printing-press-library/cli-skills/pp-laccd-class-search --force
+chmod +x laccd-class-search-pp-cli
 ```
 
-Inside a Hermes chat session:
+### From source
 
 ```bash
-/skills install mvanhorn/printing-press-library/cli-skills/pp-laccd-class-search --force
+git clone https://github.com/johnnyrobot/laccd-class-search-cli.git
+cd laccd-class-search-cli
+make build          # or: go build ./cmd/laccd-class-search-pp-cli
+make build-all      # CLI + MCP server
 ```
 
-Restart the Hermes session or gateway if the newly installed skill is not visible immediately.
+### Agent skill
 
-## Install for OpenClaw
-Install both the CLI binary and the focused OpenClaw skill. The installer defaults binaries to a per-user bin directory (`$HOME/.local/bin` on macOS/Linux, `%LOCALAPPDATA%\Programs\PrintingPress\bin` on Windows):
-
-```bash
-npx -y @mvanhorn/printing-press-library install laccd-class-search --agent openclaw
-```
-
-Restart the OpenClaw session or gateway if the newly installed skill is not visible immediately.
+`SKILL.md` in this repo is the agent skill. Point your agent at it directly, or copy it into your agent's skills directory (for Claude Code: `~/.claude/skills/pp-laccd-class-search/SKILL.md`).
 
 ## Use with Claude Desktop
 
-This CLI ships an [MCPB](https://github.com/modelcontextprotocol/mcpb) bundle — Claude Desktop's standard format for one-click MCP extension installs (no JSON config required).
+Claude Desktop has no shell, so it can't invoke the CLI. For that, `laccd-class-search-pp-mcp` bridges the gap: a thin MCP server that shells out to the same CLI binary on your behalf.
 
-To install:
-
-1. Download the `.mcpb` for your platform from the [latest release](https://github.com/mvanhorn/printing-press-library/releases/tag/laccd-class-search-current).
-2. Double-click the `.mcpb` file. Claude Desktop opens and walks you through the install.
-
-Requires Claude Desktop 1.0.0 or later. Pre-built bundles ship for macOS Apple Silicon (`darwin-arm64`) and Windows (`amd64`, `arm64`); for other platforms, use the manual config below.
-
-<details>
-<summary>Manual JSON config (advanced)</summary>
-
-If you can't use the MCPB bundle (older Claude Desktop, unsupported platform), install the MCP binary and configure it manually.
-
+Install the MCP binary:
 
 ```bash
-go install github.com/mvanhorn/printing-press-library/library/education/laccd-class-search/cmd/laccd-class-search-pp-mcp@latest
+go install github.com/johnnyrobot/laccd-class-search-cli/cmd/laccd-class-search-pp-mcp@latest
 ```
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -116,7 +77,6 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-</details>
 
 ## Authentication
 

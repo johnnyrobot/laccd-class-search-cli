@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"laccd-class-search-pp-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 )
 
 // Client talks to the LACCD PeopleSoft guest class-search portal over plain

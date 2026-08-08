@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"laccd-class-search-pp-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 )
 
 // agentContextSchemaVersion is bumped on any breaking change to the JSON

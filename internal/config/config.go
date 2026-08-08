@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"laccd-class-search-pp-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 )
 
 type Config struct {

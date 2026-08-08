@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"laccd-class-search-pp-cli/internal/store"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/store"
 )
 
 func newWorkflowCmd(flags *rootFlags) *cobra.Command {

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"laccd-class-search-pp-cli/internal/cliutil"
-	"laccd-class-search-pp-cli/internal/laccd"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
 )
 
 // watchResult reports a section's current seats plus the change since the last
