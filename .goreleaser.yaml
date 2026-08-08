@@ -9,7 +9,7 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X laccd-class-search-pp-cli/internal/cli.version={{ .Version }}
+      - -s -w -X github.com/johnnyrobot/laccd-class-search-cli/internal/cli.version={{ .Version }}
     targets:
       - darwin_amd64
       - darwin_arm64
@@ -44,7 +44,7 @@ brews:
     repository:
       owner: johnnyrobot
       name: homebrew-tap
-    homepage: "https://github.com/johnnyrobot/laccd-class-search-pp-cli"
+    homepage: "https://github.com/johnnyrobot/laccd-class-search-cli"
     description: "Search every Los Angeles Community College District class from your terminal, with a local SQLite mirror, offline full-text search, cross-college comparison, and free unlimited seat-watch."
     install: |
       bin.install "laccd-class-search-pp-cli"
