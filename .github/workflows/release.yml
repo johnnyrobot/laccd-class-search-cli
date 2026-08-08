@@ -34,5 +34,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PAT with `repo` scope — GITHUB_TOKEN cannot push to the tap repo.
+          # Fine-grained PAT scoped to the tap repo, Contents: read+write —
+          # GITHUB_TOKEN cannot push to another repository.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
