@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"laccd-class-search-pp-cli/internal/laccd"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
 )
 
 func newTermsCmd(flags *rootFlags) *cobra.Command {

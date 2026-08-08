@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"laccd-class-search-pp-cli/internal/laccd"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
 )
 
 // dayToICS maps PeopleSoft 2-letter meeting-day abbreviations to RFC 5545 BYDAY

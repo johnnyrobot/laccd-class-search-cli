@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"laccd-class-search-pp-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 )
 
 // elementTextRECache memoizes the per-id regexes elementText builds. The same

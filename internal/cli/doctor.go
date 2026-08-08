@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"laccd-class-search-pp-cli/internal/client"
-	"laccd-class-search-pp-cli/internal/cliutil"
-	"laccd-class-search-pp-cli/internal/config"
-	"laccd-class-search-pp-cli/internal/store"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/client"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/config"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/store"
 )
 
 // looksLikeDoctorInterstitial reports whether the response body matches a known

@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"laccd-class-search-pp-cli/internal/cli"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cli"
 )
 
 func main() {

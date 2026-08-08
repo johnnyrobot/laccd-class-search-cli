@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"laccd-class-search-pp-cli/internal/client"
-	"laccd-class-search-pp-cli/internal/store"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/client"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/store"
 )
 
 const networkFallbackReason = "api_unreachable"

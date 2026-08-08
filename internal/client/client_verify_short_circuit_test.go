@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"laccd-class-search-pp-cli/internal/config"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/config"
 )
 
 // recordingRoundTripper counts how many times its RoundTrip method is

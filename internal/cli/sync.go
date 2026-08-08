@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"laccd-class-search-pp-cli/internal/cliutil"
-	"laccd-class-search-pp-cli/internal/laccd"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
 )
 
 func newSyncCmd(flags *rootFlags) *cobra.Command {

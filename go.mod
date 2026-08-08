@@ -1,4 +1,4 @@
-module laccd-class-search-pp-cli
+module github.com/johnnyrobot/laccd-class-search-cli
 
 go 1.26
 
