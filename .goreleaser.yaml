@@ -44,6 +44,12 @@ brews:
     repository:
       owner: johnnyrobot
       name: homebrew-tap
+      # The built-in Actions GITHUB_TOKEN is scoped to this repo only and cannot
+      # push to the tap. Needs a fine-grained PAT scoped to the tap repo with
+      # Contents: read+write, stored as the HOMEBREW_TAP_GITHUB_TOKEN secret.
+      # Without this line goreleaser silently falls back to GITHUB_TOKEN and the
+      # release fails at the formula push, after the binaries have uploaded.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/johnnyrobot/laccd-class-search-cli"
     description: "Search every Los Angeles Community College District class from your terminal, with a local SQLite mirror, offline full-text search, cross-college comparison, and free unlimited seat-watch."
     install: |
