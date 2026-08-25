@@ -1,0 +1,13 @@
+{
+  "termname": "Fall 2026",
+  "subjects": [
+    {
+      "code": "MULTIMD",
+      "courses": [
+        {"catalogNbr": "100"},
+        {"catalogNbr": "110"},
+        {"catalogNbr": "125"}
+      ]
+    }
+  ]
+}

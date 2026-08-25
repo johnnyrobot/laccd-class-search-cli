@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,9 @@ func New(baseURL string, ratePerSec float64, timeout time.Duration, opts ...Clie
 		if opt != nil {
 			opt(client)
 		}
+	}
+	if client.discovery == nil {
+		client.discovery = NewScheduleAPIDiscovery("", client.http, client.limiter)
 	}
 	return client
 }
@@ -178,31 +182,56 @@ func (c *Client) SearchSections(ctx context.Context, college, term, subject, cat
 // so callers can report partial coverage honestly (scan-and-filter contract).
 type ScopeResult struct {
 	Sections       []Section
+	Catalogs       []string
 	CoursesScanned int
 	CoursesTotal   int
 	Truncated      bool
 }
 
 // SearchScope returns the sections for a search scope. With a catalog it is a
-// single complete request for one course. Without a catalog it fetches the
-// course list from the collapsed whole-subject page, then fans out one
-// catalog-scoped request per course (up to maxCourses) so the result is the
-// complete set of sections — the collapsed page alone only renders a sample.
+// single complete request for one course. Without a catalog it discovers the
+// complete course list from the official schedule API, then fans out one
+// catalog-scoped PeopleSoft request per selected course (up to maxCourses).
+// The collapsed whole-subject PeopleSoft page is never requested because it
+// can omit courses and contain rows from a different term.
 func (c *Client) SearchScope(ctx context.Context, college, term, subject, catalog string, maxCourses int) (ScopeResult, error) {
+	if maxCourses < 0 {
+		return ScopeResult{}, fmt.Errorf("maxCourses must be zero or positive, got %d", maxCourses)
+	}
 	if strings.TrimSpace(catalog) != "" {
 		secs, err := c.SearchSections(ctx, college, term, subject, catalog)
 		if err != nil {
 			return ScopeResult{}, err
 		}
-		return ScopeResult{Sections: secs, CoursesScanned: 1, CoursesTotal: 1}, nil
+		return ScopeResult{
+			Sections:       secs,
+			Catalogs:       []string{normalizeCatalog(catalog)},
+			CoursesScanned: 1,
+			CoursesTotal:   1,
+		}, nil
 	}
 
-	html, err := c.resultsPage(ctx, college, term, subject, "")
+	if c.discovery == nil {
+		return ScopeResult{}, fmt.Errorf("course discovery is not configured")
+	}
+	discovered, err := c.discovery.Catalogs(ctx, college, term, subject)
 	if err != nil {
 		return ScopeResult{}, err
 	}
-	catalogs := ParseCourseCatalogs(html, subject)
-	res := ScopeResult{CoursesTotal: len(catalogs)}
+	catalogs, err := normalizeScopeCatalogs(discovered)
+	if err != nil {
+		return ScopeResult{}, err
+	}
+	selected := catalogs
+	if maxCourses > 0 && maxCourses < len(selected) {
+		selected = selected[:maxCourses]
+	}
+	res := ScopeResult{
+		Catalogs:       selected,
+		CoursesScanned: len(selected),
+		CoursesTotal:   len(catalogs),
+		Truncated:      len(selected) < len(catalogs),
+	}
 	seen := map[string]bool{}
 	add := func(secs []Section) {
 		for _, s := range secs {
@@ -213,32 +242,33 @@ func (c *Client) SearchScope(ctx context.Context, college, term, subject, catalo
 			res.Sections = append(res.Sections, s)
 		}
 	}
-	if maxCourses <= 0 {
-		maxCourses = len(catalogs)
-	}
-	// Fan out per course FIRST: these catalog-scoped pages carry the authoritative
-	// catalog number for every section. The collapsed whole-subject page only
-	// renders a sample and can mis-attribute catalog for rows above the first
-	// course marker, so it is added last and only fills in sections from courses
-	// the fan-out skipped (e.g. under a curtailed maxCourses).
-	for i, cat := range catalogs {
-		if i >= maxCourses {
-			res.Truncated = true
-			break
-		}
+	for _, cat := range selected {
 		secs, err := c.SearchSections(ctx, college, term, subject, cat)
 		if err != nil {
-			if err == ErrOverCap {
-				continue
-			}
-			return res, err
+			return ScopeResult{}, err
 		}
 		add(secs)
-		res.CoursesScanned++
 	}
-	add(ParseSections(html, college, term, subject))
 	SortSections(res.Sections)
 	return res, nil
+}
+
+func normalizeScopeCatalogs(catalogs []string) ([]string, error) {
+	seen := make(map[string]bool, len(catalogs))
+	normalized := make([]string, 0, len(catalogs))
+	for _, catalog := range catalogs {
+		catalog, err := normalizeDiscoveredCatalog(catalog)
+		if err != nil {
+			return nil, fmt.Errorf("normalizing discovered catalog: %w", err)
+		}
+		if seen[catalog] {
+			continue
+		}
+		seen[catalog] = true
+		normalized = append(normalized, catalog)
+	}
+	sort.Strings(normalized)
+	return normalized, nil
 }
 
 // FetchDetail loads the results page for the section's scope, finds the section
