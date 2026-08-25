@@ -80,6 +80,24 @@ func TestSearchScopePositiveBoundTruncatesDeterministically(t *testing.T) {
 	}
 }
 
+func TestSearchScopeDeduplicatesClassNumbersAcrossCatalogs(t *testing.T) {
+	discovery := &fakeDiscovery{catalogs: []string{"003", "107", "125"}}
+	server := scopeServer(t, map[string]string{
+		"003": readFixture(t, "completeness/sections-100.html"),
+		"107": readFixture(t, "completeness/sections-110.html"),
+		"125": readFixture(t, "completeness/sections-125.html"),
+	})
+	client := New(server.server.URL, 0, time.Second, WithCourseDiscovery(discovery))
+
+	got, err := client.SearchScope(context.Background(), "LAMC", "2268", "CINEMA", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := countClassNbr(got.Sections, "17310"); count != 1 {
+		t.Fatalf("class number 17310 emitted %d times, want 1: %v", count, classNbrs(got.Sections))
+	}
+}
+
 func TestSearchScopeRejectsNegativeBounds(t *testing.T) {
 	discovery := &fakeDiscovery{catalogs: []string{"003"}}
 	server := scopeServer(t, map[string]string{"003": readFixture(t, "completeness/sections-100.html")})
@@ -233,6 +251,16 @@ func onlyCatalogClassNbrs(sections []Section, catalog string) []string {
 		}
 	}
 	return out
+}
+
+func countClassNbr(sections []Section, classNbr string) int {
+	count := 0
+	for _, section := range sections {
+		if section.ClassNbr == classNbr {
+			count++
+		}
+	}
+	return count
 }
 
 const collapsedSampleFixture = `
