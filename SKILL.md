@@ -172,11 +172,13 @@ the subject has more catalogs. `--max-courses 0` means unbounded discovery and
 fan-out. Negative values are usage errors. The command defaults are 30 for
 `search` and 50 for `sync`; use 0 when a complete mirror is required.
 
-Whole-subject local and automatic fallback reads require a version-2 mirror
-marker (`completeness_version=2`, `discovery_source=laccd-schedule-api`, the
-authoritative ordered catalog list, equal total/scanned counts, and
-`truncated=false`). Older mirrors remain on disk and are still usable for an
-explicit `--catalog` read, but a whole-subject local read must resync:
+Whole-subject local and automatic fallback reads require a valid version-2
+mirror marker: `completeness_version=2`, a non-null valid ordered catalog list,
+equal total/scanned counts, `truncated=false`, and a sync timestamp.
+`discovery_source=laccd-schedule-api` is retained as provenance, not as an
+additional exact-value validity gate. Older mirrors remain on disk and are
+still usable for an explicit `--catalog` read, but a whole-subject local read
+must resync:
 
 ```bash
 laccd-class-search-pp-cli sync --college LAPC --term 2268 --subject MATH --max-courses 0

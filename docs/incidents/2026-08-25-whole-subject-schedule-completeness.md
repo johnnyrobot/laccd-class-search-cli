@@ -92,6 +92,11 @@ whole-subject `--data-source local` or `auto` read. Marker writes and all scope
 rows are atomic, so a failed or truncated sync cannot replace a known-good
 complete scope with partial data.
 
+`discovery_source=laccd-schedule-api` is recorded for provenance. The source
+value is not an additional exact-value validity gate; marker validity is
+determined by the version, valid ordered catalog array, counts, truncation flag,
+and timestamp above.
+
 This migration is additive: existing section rows and the section-row schema
 are unchanged. Legacy mirrors remain on disk and remain usable for explicit
 catalog-scoped reads. No migration infers completeness from old rows, because

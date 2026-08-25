@@ -10,6 +10,7 @@
     "internal/laccd/schedule_discovery_test.go",
     "internal/laccd/search_scope_test.go",
     "internal/store/store.go",
+    "internal/store/schema_version_test.go",
     "internal/store/scope_completeness_test.go",
     "internal/cli/laccd_common.go",
     "internal/cli/search.go",
@@ -24,7 +25,7 @@
     "Normalize, deduplicate, sort, and explicitly bound discovered catalogs; positive --max-courses selects the first N and --max-courses 0 is unbounded.",
     "Never request, parse, or merge the collapsed no-catalog PeopleSoft sample for whole-subject results.",
     "Perform one catalog-scoped PeopleSoft request per selected catalog, deduplicate class numbers, and abort the whole scope on discovery or catalog failure.",
-    "Persist only version-2 complete whole-subject mirrors with discovery_source=laccd-schedule-api, authoritative catalog order, equal total/scanned counts, and truncated=false.",
+    "Persist only version-2 complete whole-subject mirrors; retain discovery_source=laccd-schedule-api as provenance, while validity requires a non-null valid ordered catalogs array, equal total/scanned counts, truncated=false, and a sync timestamp.",
     "Keep legacy mirrors available for explicit catalog reads while requiring a resync for whole-subject local or auto reads.",
     "Preserve the direct-catalog degraded path without claiming whole-subject completeness.",
     "Keep deterministic fixture replay separate from current live production evidence."

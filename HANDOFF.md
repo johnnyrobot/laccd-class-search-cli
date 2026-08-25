@@ -213,11 +213,13 @@ add detailed seat snapshots. Whole-subject `sync` writes an additive,
 version-2 `sync_state` completeness marker containing `completeness_version=2`,
 `discovery_source=laccd-schedule-api`, ordered `catalogs_json`,
 `courses_total`, `courses_scanned`, `truncated`, and `synced_at`. Only a valid
-marker with equal total/scanned counts and `truncated=false` authorizes a
-whole-subject `local` or `auto` read. Legacy markers are not inferred or
-upgraded: explicit catalog reads remain usable, while a whole-subject read
-requires `sync --max-courses 0`. `changed` needs ≥2 syncs spanning the window
-to be meaningful (fresh mirror reads as all-new).
+marker with version 2, a non-null valid ordered catalogs array, equal
+total/scanned counts, `truncated=false`, and a sync timestamp authorizes a
+whole-subject `local` or `auto` read. `discovery_source` records provenance;
+the value is not an additional exact-value validity gate. Legacy markers are
+not inferred or upgraded: explicit catalog reads remain usable, while a
+whole-subject read requires `sync --max-courses 0`. `changed` needs ≥2 syncs
+spanning the window to be meaningful (fresh mirror reads as all-new).
 
 ## 8. Known gaps & honest caveats
 
