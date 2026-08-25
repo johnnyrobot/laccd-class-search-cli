@@ -44,6 +44,33 @@ func TestScopeCompleteness_RoundTripPreservesZeroSectionCatalog(t *testing.T) {
 	}
 }
 
+func TestScopeCompleteness_EmptyCatalogArrayIsComplete(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	const scopeKey = "sections:LAMC:2258:EMPTY"
+	want := ScopeCompleteness{
+		Version: 2, DiscoverySource: "laccd-schedule-api", Catalogs: []string{},
+		CoursesTotal: 0, CoursesScanned: 0, SyncedAt: time.Date(2026, time.August, 25, 19, 45, 0, 0, time.UTC),
+	}
+	if err := s.SaveScopeCompleteness(scopeKey, want); err != nil {
+		t.Fatalf("save completeness: %v", err)
+	}
+	got, ok, err := s.GetScopeCompleteness(scopeKey)
+	if err != nil {
+		t.Fatalf("get completeness: %v", err)
+	}
+	if !ok {
+		t.Fatal("empty catalog JSON array reported incomplete")
+	}
+	if got.Catalogs == nil || len(got.Catalogs) != 0 {
+		t.Fatalf("catalogs = %#v, want non-nil empty array", got.Catalogs)
+	}
+}
+
 func TestScopeCompleteness_LegacyInvalidAndIncompleteMarkersAreRejected(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -82,6 +109,16 @@ func TestScopeCompleteness_LegacyInvalidAndIncompleteMarkersAreRejected(t *testi
 			catalogs:   `["003"`,
 			total:      1,
 			scanned:    1,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "null catalogs JSON",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `null`,
+			total:      0,
+			scanned:    0,
 			truncated:  false,
 			lastSynced: "2026-08-25T19:30:00Z",
 		},
@@ -226,5 +263,117 @@ func TestScopeCompleteness_CompleteScheduleScopeRollsBackOnMarkerFailure(t *test
 		t.Fatalf("get completeness: %v", err)
 	} else if ok {
 		t.Fatal("marker reported complete after transaction rollback")
+	}
+}
+
+func TestScopeCompleteness_CompleteScheduleScopeRollsBackOnFTSFailure(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	// The generic resource insert is the first statement for a section. Drop
+	// its FTS table so the immediately following cleanup statement fails before
+	// typed sections, snapshots, or the marker are written.
+	if _, err := s.DB().ExecContext(t.Context(), `DROP TABLE resources_fts`); err != nil {
+		t.Fatalf("drop resources FTS: %v", err)
+	}
+
+	const scopeKey = "sections:LAMC:2258:CINEMA"
+	item := json.RawMessage(`{"id":"11111","class_nbr":"11111","college":"LAMC","term":"2258","subject":"CINEMA","catalog":"003"}`)
+	snapshot := SeatSnapshot{ClassNbr: "11111", College: "LAMC", Term: "2258", Subject: "CINEMA", Status: "Open", ObservedAt: time.Now()}
+	marker := ScopeCompleteness{
+		Version: 2, DiscoverySource: "laccd-schedule-api", Catalogs: []string{"003"},
+		CoursesTotal: 1, CoursesScanned: 1, SyncedAt: time.Now().UTC(),
+	}
+	if err := s.SaveCompleteScheduleScope(scopeKey, []json.RawMessage{item}, []SeatSnapshot{snapshot}, marker); err == nil {
+		t.Fatal("save complete scope succeeded despite generic-resource FTS failure")
+	}
+
+	for table := range map[string]struct{}{"resources": {}, "sections": {}, "seat_snapshots": {}} {
+		var got int
+		if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != 0 {
+			t.Fatalf("%s rows = %d after rollback, want 0", table, got)
+		}
+	}
+	if _, ok, err := s.GetScopeCompleteness(scopeKey); err != nil {
+		t.Fatalf("get completeness: %v", err)
+	} else if ok {
+		t.Fatal("marker reported complete after pre-marker transaction failure")
+	}
+}
+
+func TestScopeCompleteness_UpsertBatchKeepsBestEffortFTSSemantics(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.DB().ExecContext(t.Context(), `DROP TABLE resources_fts`); err != nil {
+		t.Fatalf("drop resources FTS: %v", err)
+	}
+	item := json.RawMessage(`{"id":"11111","class_nbr":"11111","college":"LAMC","term":"2258","subject":"CINEMA","catalog":"003"}`)
+	stored, failed, err := s.UpsertBatch("sections", []json.RawMessage{item})
+	if err != nil {
+		t.Fatalf("UpsertBatch changed best-effort FTS behavior: %v", err)
+	}
+	if stored != 1 || failed != 0 {
+		t.Fatalf("UpsertBatch stored=%d failed=%d, want 1, 0", stored, failed)
+	}
+	for table := range map[string]struct{}{"resources": {}, "sections": {}} {
+		var got int
+		if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != 1 {
+			t.Fatalf("%s rows = %d, want 1", table, got)
+		}
+	}
+}
+
+func TestScopeCompleteness_SnapshotInsertSemanticsAreShared(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	available := 4
+	waitlist := 2
+	if err := s.AddSeatSnapshot(SeatSnapshot{
+		ClassNbr: "11111", College: "LAMC", Term: "2258", Subject: "CINEMA", Status: "Open", Available: &available,
+	}); err != nil {
+		t.Fatalf("add direct snapshot: %v", err)
+	}
+	marker := ScopeCompleteness{
+		Version: 2, DiscoverySource: "laccd-schedule-api", Catalogs: []string{},
+		CoursesTotal: 0, CoursesScanned: 0, SyncedAt: time.Now().UTC(),
+	}
+	if err := s.SaveCompleteScheduleScope("sections:LAMC:2258:CINEMA", nil, []SeatSnapshot{{
+		ClassNbr: "22222", College: "LAMC", Term: "2258", Subject: "CINEMA", Status: "Closed", WaitlistTotal: &waitlist,
+	}}, marker); err != nil {
+		t.Fatalf("save transactional snapshot: %v", err)
+	}
+
+	snapshots, err := s.SnapshotsFiltered("LAMC", "2258", "CINEMA")
+	if err != nil {
+		t.Fatalf("read snapshots: %v", err)
+	}
+	if len(snapshots) != 2 {
+		t.Fatalf("snapshots = %d, want 2", len(snapshots))
+	}
+	if snapshots[0].ObservedAt.IsZero() || snapshots[1].ObservedAt.IsZero() {
+		t.Fatalf("zero observed time after normalization: %#v", snapshots)
+	}
+	if snapshots[0].Available == nil || *snapshots[0].Available != available || snapshots[0].WaitlistTotal != nil {
+		t.Fatalf("direct snapshot nullable counts = %#v, want available=%d and nil waitlist", snapshots[0], available)
+	}
+	if snapshots[1].Available != nil || snapshots[1].WaitlistTotal == nil || *snapshots[1].WaitlistTotal != waitlist {
+		t.Fatalf("transactional snapshot nullable counts = %#v, want nil available and waitlist=%d", snapshots[1], waitlist)
 	}
 }

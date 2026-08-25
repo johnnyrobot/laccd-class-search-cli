@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -36,6 +37,10 @@ type SeatSnapshot struct {
 	Available     *int      `json:"available,omitempty"`
 	WaitlistTotal *int      `json:"waitlist_total,omitempty"`
 	ObservedAt    time.Time `json:"observed_at"`
+}
+
+type sqlContextExecutor interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 // SectionsByScope returns the raw section JSON for sections matching the given
@@ -140,12 +145,16 @@ func (s *Store) GetSectionDetail(classNbr string) (SectionDetailRow, bool, error
 
 // AddSeatSnapshot appends a status/seats observation for a section.
 func (s *Store) AddSeatSnapshot(snap SeatSnapshot) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return insertSeatSnapshot(context.Background(), s.db, snap)
+}
+
+func insertSeatSnapshot(ctx context.Context, executor sqlContextExecutor, snap SeatSnapshot) error {
 	if snap.ObservedAt.IsZero() {
 		snap.ObservedAt = time.Now()
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	_, err := s.db.Exec(
+	_, err := executor.ExecContext(ctx,
 		`INSERT INTO seat_snapshots (class_nbr, college, term, subject, status, available, waitlist_total, observed_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		snap.ClassNbr, snap.College, snap.Term, snap.Subject, snap.Status,

@@ -789,7 +789,15 @@ func isSQLiteBusy(err error) bool {
 }
 
 func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, data json.RawMessage) error {
-	_, err := tx.Exec(
+	return s.upsertGenericResourceWithFTSTx(tx, resourceType, id, data, false)
+}
+
+func (s *Store) upsertCompleteGenericResourceTx(tx *sql.Tx, resourceType, id string, data json.RawMessage) error {
+	return s.upsertGenericResourceWithFTSTx(tx, resourceType, id, data, true)
+}
+
+func (s *Store) upsertGenericResourceWithFTSTx(tx *sql.Tx, resourceType, id string, data json.RawMessage, strictFTS bool) error {
+	_, err := tx.ExecContext(context.Background(),
 		`INSERT INTO resources (id, resource_type, data, synced_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?)
 		 ON CONFLICT(resource_type, id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at, updated_at = excluded.updated_at`,
@@ -802,15 +810,21 @@ func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, dat
 	ftsRowid := ftsRowID(resourceType, id)
 	// Use explicit rowid for FTS5 compatibility with modernc.org/sqlite.
 	// Standard DELETE WHERE column=? may not work on FTS5 virtual tables.
-	if _, err = tx.Exec(`DELETE FROM resources_fts WHERE rowid = ?`, ftsRowid); err != nil {
+	if _, err = tx.ExecContext(context.Background(), `DELETE FROM resources_fts WHERE rowid = ?`, ftsRowid); err != nil {
+		if strictFTS {
+			return fmt.Errorf("clean up resources FTS: %w", err)
+		}
 		fmt.Fprintf(os.Stderr, "warning: FTS index cleanup failed: %v\n", err)
 	}
 
-	if _, err = tx.Exec(
+	if _, err = tx.ExecContext(context.Background(),
 		`INSERT INTO resources_fts (rowid, id, resource_type, content)
 		 VALUES (?, ?, ?, ?)`,
 		ftsRowid, id, resourceType, searchableResourceContent(data),
 	); err != nil {
+		if strictFTS {
+			return fmt.Errorf("update resources FTS: %w", err)
+		}
 		// FTS insert failure is non-fatal
 		fmt.Fprintf(os.Stderr, "warning: FTS index update failed: %v\n", err)
 	}
@@ -1465,28 +1479,12 @@ func (s *Store) upsertCompleteSectionsTx(tx *sql.Tx, items []json.RawMessage) er
 			return fmt.Errorf("missing id for sections")
 		}
 		storageID := resourceStorageID("sections", id, obj)
-		if err := s.upsertGenericResourceTx(tx, "sections", storageID, item); err != nil {
+		if err := s.upsertCompleteGenericResourceTx(tx, "sections", storageID, item); err != nil {
 			return fmt.Errorf("upserting sections/%s: %w", storageID, err)
 		}
 		if err := s.upsertSectionsTx(tx, storageID, obj, item); err != nil {
 			return fmt.Errorf("upserting typed sections/%s: %w", storageID, err)
 		}
-	}
-	return nil
-}
-
-func insertSeatSnapshotTx(tx *sql.Tx, snap SeatSnapshot) error {
-	if snap.ObservedAt.IsZero() {
-		snap.ObservedAt = time.Now()
-	}
-	_, err := tx.ExecContext(context.Background(),
-		`INSERT INTO seat_snapshots (class_nbr, college, term, subject, status, available, waitlist_total, observed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		snap.ClassNbr, snap.College, snap.Term, snap.Subject, snap.Status,
-		nullableInt(snap.Available), nullableInt(snap.WaitlistTotal), snap.ObservedAt.UTC().Format(time.RFC3339),
-	)
-	if err != nil {
-		return fmt.Errorf("insert seat_snapshot: %w", err)
 	}
 	return nil
 }
@@ -1537,7 +1535,7 @@ func (s *Store) SaveCompleteScheduleScope(scopeKey string, items []json.RawMessa
 		return err
 	}
 	for _, snapshot := range snapshots {
-		if err := insertSeatSnapshotTx(tx, snapshot); err != nil {
+		if err := insertSeatSnapshot(context.Background(), tx, snapshot); err != nil {
 			return err
 		}
 	}
@@ -1653,7 +1651,7 @@ func (s *Store) GetScopeCompleteness(scopeKey string) (ScopeCompleteness, bool, 
 	if version.Int64 != 2 || coursesTotal.Int64 != coursesScanned.Int64 || truncated.Bool {
 		return marker, false, nil
 	}
-	if err := json.Unmarshal([]byte(catalogsJSON.String), &marker.Catalogs); err != nil {
+	if err := json.Unmarshal([]byte(catalogsJSON.String), &marker.Catalogs); err != nil || marker.Catalogs == nil {
 		return ScopeCompleteness{}, false, nil
 	}
 	marker.Version = int(version.Int64)
