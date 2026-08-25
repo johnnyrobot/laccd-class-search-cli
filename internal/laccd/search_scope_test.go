@@ -4,14 +4,71 @@ package laccd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+type completenessReplayManifest struct {
+	FixtureHashes map[string]string `json:"fixture_hashes"`
+	Catalogs      []string          `json:"catalogs"`
+	ClassNumbers  []string          `json:"class_numbers"`
+}
+
+func TestCompletenessReplayManifest(t *testing.T) {
+	fixtures := filepath.Join("testdata", "completeness")
+	data, err := os.ReadFile(filepath.Join(fixtures, "replay-manifest.json"))
+	if err != nil {
+		t.Fatalf("read replay manifest: %v", err)
+	}
+	var manifest completenessReplayManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatalf("decode replay manifest: %v", err)
+	}
+	for name, want := range manifest.FixtureHashes {
+		data, err := os.ReadFile(filepath.Join(fixtures, name))
+		if err != nil {
+			t.Fatalf("read fixture %s: %v", name, err)
+		}
+		got := sha256.Sum256(data)
+		if got := hex.EncodeToString(got[:]); got != want {
+			t.Fatalf("fixture %s SHA-256 = %s, want %s", name, got, want)
+		}
+	}
+
+	replay, err := StartFixtureReplay(fixtures)
+	if err != nil {
+		t.Fatalf("start fixture replay: %v", err)
+	}
+	t.Cleanup(replay.Close)
+	client := New(replay.URL(), 0, time.Second, WithCourseDiscovery(replay.Discovery()))
+
+	got, err := client.SearchScope(context.Background(), "LAMC", "2268", "MULTIMD", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Catalogs, manifest.Catalogs) {
+		t.Fatalf("catalogs = %v, want %v", got.Catalogs, manifest.Catalogs)
+	}
+	if gotClassNumbers := sortedClassNumbers(got.Sections); !slices.Equal(gotClassNumbers, manifest.ClassNumbers) {
+		t.Fatalf("class numbers = %v, want %v", gotClassNumbers, manifest.ClassNumbers)
+	}
+}
+
+func sortedClassNumbers(sections []Section) []string {
+	classNumbers := classNbrs(sections)
+	slices.Sort(classNumbers)
+	return classNumbers
+}
 
 func TestSearchScopeUsesDiscoveryInsteadOfCollapsedSample(t *testing.T) {
 	discovery := &fakeDiscovery{catalogs: []string{"003", "107", "125"}}

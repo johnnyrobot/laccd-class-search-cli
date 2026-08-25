@@ -1,0 +1,10 @@
+{
+  "fixture_hashes": {
+    "discovery-multimd.json": "4c7aba4b691f0fac58b471012bdbc7ab4b0c712d755a0bd4f6e4330f603b0376",
+    "sections-100.html": "87de89507c6fa3fc113920bced9126c62d5eb3109ef9724ed6600eaf6c8988f1",
+    "sections-110.html": "5f760999a44f170d0b2919dcc5e2587cc931ed7192a15bc16b978b68d404ae96",
+    "sections-125.html": "a5b2d22d58fc16debc1cb643d739f01c0aaa5bdb51f339a43af03943f7b25abf"
+  },
+  "catalogs": ["100", "110", "125"],
+  "class_numbers": ["17300", "17310", "17490", "17491"]
+}
