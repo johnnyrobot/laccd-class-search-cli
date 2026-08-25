@@ -190,6 +190,35 @@ laccd-class-search-pp-cli changed --since 24h
 
 Lists new sections, dropped sections, and open-to-closed flips since the previous sync.
 
+### Whole-subject completeness and bounds
+
+When `search` or `sync` omits `--catalog`, the CLI first asks the official
+LACCD schedule service for the complete catalog list for the college, term, and
+subject. It then fans out one catalog-scoped PeopleSoft request per discovered
+course. The collapsed no-catalog PeopleSoft sample is never merged, because it
+can omit courses and can contain rows from a different term.
+
+Use `--max-courses N` to make the fan-out explicit and reproducible. A positive
+`N` scans the first `N` normalized catalog numbers in deterministic order and
+marks the result `truncated` when more courses remain. `--max-courses 0` means
+no bound (scan every discovered catalog). A negative value is a usage error.
+
+Whole-subject syncs persist a version-2 completeness marker with
+`discovery_source=laccd-schedule-api`, the authoritative catalog order, total
+and scanned counts, and `truncated=false`. `--data-source local` and `auto`
+only treat such a marker as a complete whole-subject mirror. A legacy mirror
+without the marker is retained for explicit `--catalog` reads, but whole-subject
+local reads require a resync:
+
+```bash
+laccd-class-search-pp-cli sync --college LAPC --term 2268 --subject MATH --max-courses 0
+```
+
+With `--catalog`, discovery is intentionally bypassed and the existing single
+catalog-scoped PeopleSoft request remains available. This direct-catalog path
+is useful when discovery is unavailable and preserves access to legacy mirror
+rows; it does not certify the whole subject as complete.
+
 ## Usage
 
 Run `laccd-class-search-pp-cli --help` for the full command reference and flag list.

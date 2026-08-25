@@ -76,9 +76,18 @@ The client handles this once per process (`internal/laccd/client.go` `warmup`).
    - Returns the `SSR_CLSRCH_MTG1` results grid as HTML.
    - **With `catalogid`:** all sections of one course (complete).
    - **Without `catalogid`:** a COLLAPSED whole-subject sample (~17 sections
-     across N courses, NOT all sections). For completeness the client fans out
-     one catalog-scoped request per course (`SearchScope`). `catalogid` is
-     zero-padded to 3 digits (`035`); 4-digit CCN numbers pass through.
+     across N courses, NOT all sections). The current `SearchScope` path does
+     not request or parse this sample. It first calls the official schedule
+     discovery endpoint
+     `https://services.laccd.edu/apps/api/classschedule/listing/{college}/{term}?subjectlist={subject}`,
+     normalizes/deduplicates/sorts its catalog numbers, then fans out one
+     catalog-scoped request per selected course. `catalogid` is zero-padded to
+     3 digits (`035`); 4-digit CCN numbers pass through.
+   - `--max-courses N` bounds whole-subject discovery-driven fan-out to the
+     first N catalogs in that deterministic order. `0` is unbounded; negative
+     values are usage errors. A bounded result reports `courses_scanned`,
+     `courses_total`, and `truncated` and must not be persisted by `sync` as a
+     complete scope.
 
 2. **Section detail / seats (stateful ICAction POST)** — the only way to get
    exact seat counts. Flow: warm-up → deep-link GET the results page (harvest
@@ -183,6 +192,8 @@ generator stubbed those for filling).
 Global flags worth knowing: `--json` / `--agent` (agent mode), `--select`
 (dotted-path field filter, e.g. `--select sections.class_nbr,sections.status`),
 `--data-source auto|local|live`, `--db`, `--dry-run`, `--rate-limit`, `--timeout`.
+Whole-subject `search` defaults to `--max-courses 30`; `sync` defaults to
+`--max-courses 50`. Pass `--max-courses 0` for an unbounded resync.
 
 Every hand-written command: verify-friendly (`--dry-run` exits 0 before any IO),
 typed exit codes (2=usage, 5=api, etc.), `IsVerifyEnv()`/`IsDogfoodEnv()`
@@ -198,8 +209,15 @@ short-circuits so the test matrices don't make false failures, and a
 - `resources_fts` / `sections_fts` — FTS5 offline search.
 
 `search`/`sync` populate `sections` and append grid snapshots; `section`/`watch`
-add detailed seat snapshots. `changed` needs ≥2 syncs spanning the window to be
-meaningful (fresh mirror reads as all-new).
+add detailed seat snapshots. Whole-subject `sync` writes an additive,
+version-2 `sync_state` completeness marker containing `completeness_version=2`,
+`discovery_source=laccd-schedule-api`, ordered `catalogs_json`,
+`courses_total`, `courses_scanned`, `truncated`, and `synced_at`. Only a valid
+marker with equal total/scanned counts and `truncated=false` authorizes a
+whole-subject `local` or `auto` read. Legacy markers are not inferred or
+upgraded: explicit catalog reads remain usable, while a whole-subject read
+requires `sync --max-courses 0`. `changed` needs ≥2 syncs spanning the window
+to be meaningful (fresh mirror reads as all-new).
 
 ## 8. Known gaps & honest caveats
 

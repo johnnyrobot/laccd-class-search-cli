@@ -157,6 +157,36 @@ No login or API key. The portal is the public guest class search; the CLI establ
 
 Run `laccd-class-search-pp-cli doctor` to verify setup.
 
+## Whole-subject completeness
+
+For `search` and `sync` without `--catalog`, the CLI uses the official LACCD
+schedule discovery service to enumerate every catalog offered for the requested
+college, term, and subject. It then performs one catalog-scoped PeopleSoft
+request per discovered catalog. Do not interpret the collapsed no-catalog
+PeopleSoft sample as a complete subject result; the CLI deliberately does not
+merge it.
+
+`--max-courses N` is an explicit fan-out bound. A positive value scans the first
+N normalized catalogs in deterministic order and reports `truncated=true` if
+the subject has more catalogs. `--max-courses 0` means unbounded discovery and
+fan-out. Negative values are usage errors. The command defaults are 30 for
+`search` and 50 for `sync`; use 0 when a complete mirror is required.
+
+Whole-subject local and automatic fallback reads require a version-2 mirror
+marker (`completeness_version=2`, `discovery_source=laccd-schedule-api`, the
+authoritative ordered catalog list, equal total/scanned counts, and
+`truncated=false`). Older mirrors remain on disk and are still usable for an
+explicit `--catalog` read, but a whole-subject local read must resync:
+
+```bash
+laccd-class-search-pp-cli sync --college LAPC --term 2268 --subject MATH --max-courses 0
+```
+
+An explicit `--catalog` request bypasses discovery and retains the direct
+catalog-scoped PeopleSoft request. This is the degraded, useful path when the
+official discovery service is unavailable; it does not claim whole-subject
+completeness.
+
 ## Agent Mode
 
 Add `--agent` to any command. Expands to: `--json --compact --no-input --no-color --yes`.

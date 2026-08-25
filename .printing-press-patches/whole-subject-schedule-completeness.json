@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "patch_id": "whole-subject-schedule-completeness",
+  "created": "2026-08-25",
+  "summary": "Preserve complete whole-subject schedule discovery and mirror semantics across Printing Press regeneration.",
+  "generated_files": [
+    "internal/laccd/client.go",
+    "internal/laccd/schedule_discovery.go",
+    "internal/laccd/replay.go",
+    "internal/laccd/schedule_discovery_test.go",
+    "internal/laccd/search_scope_test.go",
+    "internal/store/store.go",
+    "internal/store/scope_completeness_test.go",
+    "internal/cli/laccd_common.go",
+    "internal/cli/search.go",
+    "internal/cli/sync.go",
+    "internal/cli/schedule_completeness_test.go",
+    "tools/schedule-replay/main.go",
+    "tools/schedule-replay/main_test.go",
+    "internal/laccd/testdata/completeness/replay-manifest.json"
+  ],
+  "required_behavior": [
+    "Whole-subject searches discover catalogs from the official LACCD schedule API before PeopleSoft fan-out.",
+    "Normalize, deduplicate, sort, and explicitly bound discovered catalogs; positive --max-courses selects the first N and --max-courses 0 is unbounded.",
+    "Never request, parse, or merge the collapsed no-catalog PeopleSoft sample for whole-subject results.",
+    "Perform one catalog-scoped PeopleSoft request per selected catalog, deduplicate class numbers, and abort the whole scope on discovery or catalog failure.",
+    "Persist only version-2 complete whole-subject mirrors with discovery_source=laccd-schedule-api, authoritative catalog order, equal total/scanned counts, and truncated=false.",
+    "Keep legacy mirrors available for explicit catalog reads while requiring a resync for whole-subject local or auto reads.",
+    "Preserve the direct-catalog degraded path without claiming whole-subject completeness.",
+    "Keep deterministic fixture replay separate from current live production evidence."
+  ],
+  "regression_tests": [
+    "go test ./internal/laccd -run 'TestSearchScope|TestCompletenessReplayManifest|TestFixtureReplayRejectsMismatchedScope' -count=1",
+    "go test ./internal/store -run 'Test.*ScopeCompleteness|TestMigrate_AddsColumnsOnUpgrade_SyncState' -count=1",
+    "go test ./internal/cli -run 'Test.*(Completeness|Truncated|LegacyMirror|BoundedLocal|NegativeMaxCourses)' -count=1",
+    "go test ./tools/schedule-replay -count=1",
+    "go run ./tools/schedule-replay --fixtures internal/laccd/testdata/completeness --college LAMC --term 2268 --subject MULTIMD",
+    "go test ./... -count=1",
+    "go vet ./...",
+    "make build-all"
+  ],
+  "preservation_notes": [
+    "The generated false assumption was that a collapsed no-catalog PeopleSoft sample enumerates every course and section.",
+    "The official discovery endpoint is https://services.laccd.edu/apps/api/classschedule/listing/{college}/{term}?subjectlist={subject}.",
+    "The local incident record is docs/incidents/2026-08-25-whole-subject-schedule-completeness.md; its captured fixtures are historical deterministic evidence, not live schedule proof."
+  ]
+}
