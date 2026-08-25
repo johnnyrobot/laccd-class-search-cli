@@ -207,11 +207,15 @@ Whole-subject syncs persist a version-2 completeness marker with
 `discovery_source=laccd-schedule-api` as provenance, the authoritative catalog
 order, total and scanned counts, and `truncated=false`. `--data-source local`
 and `auto` only treat a marker as a complete whole-subject mirror when its
-validity gates all hold: version 2, a non-null valid ordered catalogs array,
-equal total and scanned counts, `truncated=false`, and a sync timestamp. The
-discovery-source value is recorded for provenance and is not an additional
-exact-value validity gate. A legacy mirror without the marker is retained for
-explicit `--catalog` reads, but whole-subject local reads require a resync:
+validity gates all hold: version 2, nonnegative counts, a non-null normalized,
+unique, sorted catalog array whose length equals `courses_total`, equal total
+and scanned counts, `truncated=false`, and a sync timestamp. Each complete sync
+atomically replaces the current scope rows and FTS entries while retaining
+append-only seat snapshots. Local reads take the marker and rows from one
+SQLite generation. The discovery-source value is recorded for provenance and
+is not an additional exact-value validity gate. A legacy mirror without the
+marker is retained for explicit `--catalog` reads, but whole-subject local reads
+require a resync:
 
 ```bash
 laccd-class-search-pp-cli sync --college LAPC --term 2268 --subject MATH --max-courses 0

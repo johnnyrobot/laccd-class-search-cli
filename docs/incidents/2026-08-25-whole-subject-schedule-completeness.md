@@ -86,11 +86,14 @@ truncated            = false
 synced_at            = sync timestamp
 ```
 
-Only a valid version-2 marker with a non-null catalog array, equal total and
-scanned counts, `truncated=false`, and a sync timestamp authorizes a
-whole-subject `--data-source local` or `auto` read. Marker writes and all scope
-rows are atomic, so a failed or truncated sync cannot replace a known-good
-complete scope with partial data.
+Only a valid version-2 marker with nonnegative counts, a non-null normalized,
+unique, sorted catalog array whose length equals `courses_total`, equal total
+and scanned counts, `truncated=false`, and a sync timestamp authorizes a
+whole-subject `--data-source local` or `auto` read. Each complete sync prunes
+obsolete current section, generic-resource, and FTS rows in the same transaction
+as its upserts and marker while retaining append-only seat snapshots. Local
+reads take the marker and current rows from one read transaction, so concurrent
+syncs cannot mix generations.
 
 `discovery_source=laccd-schedule-api` is recorded for provenance. The source
 value is not an additional exact-value validity gate; marker validity is

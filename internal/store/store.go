@@ -1468,25 +1468,161 @@ func (s *Store) UpsertBatch(resourceType string, items []json.RawMessage) (int, 
 	return stored, extractFailures, nil
 }
 
-func (s *Store) upsertCompleteSectionsTx(tx *sql.Tx, items []json.RawMessage) error {
+func (s *Store) upsertCompleteSectionsTx(tx *sql.Tx, items []json.RawMessage) (map[string]struct{}, error) {
+	ids := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		obj, err := DecodeJSONObject(item)
 		if err != nil {
-			return fmt.Errorf("unmarshaling sections: %w", err)
+			return nil, fmt.Errorf("unmarshaling sections: %w", err)
 		}
 		id := ExtractResourceID("sections", obj)
 		if id == "" {
-			return fmt.Errorf("missing id for sections")
+			return nil, fmt.Errorf("missing id for sections")
 		}
 		storageID := resourceStorageID("sections", id, obj)
 		if err := s.upsertCompleteGenericResourceTx(tx, "sections", storageID, item); err != nil {
-			return fmt.Errorf("upserting sections/%s: %w", storageID, err)
+			return nil, fmt.Errorf("upserting sections/%s: %w", storageID, err)
 		}
 		if err := s.upsertSectionsTx(tx, storageID, obj, item); err != nil {
-			return fmt.Errorf("upserting typed sections/%s: %w", storageID, err)
+			return nil, fmt.Errorf("upserting typed sections/%s: %w", storageID, err)
+		}
+		ids[storageID] = struct{}{}
+	}
+	return ids, nil
+}
+
+type scheduleScope struct {
+	college string
+	term    string
+	subject string
+}
+
+func parseScheduleScopeKey(scopeKey string) (scheduleScope, error) {
+	parts := strings.SplitN(scopeKey, ":", 4)
+	if len(parts) != 4 || parts[0] != "sections" {
+		return scheduleScope{}, fmt.Errorf("invalid complete schedule scope key %q", scopeKey)
+	}
+	scope := scheduleScope{
+		college: strings.ToUpper(strings.TrimSpace(parts[1])),
+		term:    strings.TrimSpace(parts[2]),
+		subject: strings.ToUpper(strings.TrimSpace(parts[3])),
+	}
+	if scope.college == "" || scope.term == "" || scope.subject == "" {
+		return scheduleScope{}, fmt.Errorf("invalid complete schedule scope key %q", scopeKey)
+	}
+	return scope, nil
+}
+
+func pruneCompleteScheduleScopeTx(tx *sql.Tx, scope scheduleScope, keep map[string]struct{}) error {
+	stale, err := staleCompleteScheduleSectionIDsTx(tx, scope, keep)
+	if err != nil {
+		return err
+	}
+	for _, id := range stale {
+		if _, err := tx.ExecContext(context.Background(), `DELETE FROM sections WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("delete typed sections/%s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(context.Background(), `DELETE FROM resources_fts WHERE rowid = ?`, ftsRowID("sections", id)); err != nil {
+			return fmt.Errorf("delete resources FTS for sections/%s: %w", id, err)
+		}
+		if _, err := tx.ExecContext(context.Background(), `DELETE FROM resources WHERE resource_type = 'sections' AND id = ?`, id); err != nil {
+			return fmt.Errorf("delete generic sections/%s: %w", id, err)
 		}
 	}
 	return nil
+}
+
+func staleCompleteScheduleSectionIDsTx(tx *sql.Tx, scope scheduleScope, keep map[string]struct{}) ([]string, error) {
+	rows, err := tx.QueryContext(context.Background(),
+		`SELECT id FROM sections
+		 WHERE upper(trim(college)) = ? AND trim(term) = ? AND upper(trim(subject)) = ?
+		 UNION
+		 SELECT id FROM resources
+		 WHERE resource_type = 'sections'
+		   AND upper(trim(CAST(json_extract(data, '$.college') AS TEXT))) = ?
+		   AND trim(CAST(json_extract(data, '$.term') AS TEXT)) = ?
+		   AND upper(trim(CAST(json_extract(data, '$.subject') AS TEXT))) = ?`,
+		scope.college, scope.term, scope.subject,
+		scope.college, scope.term, scope.subject,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query complete-scope section ids: %w", err)
+	}
+	defer rows.Close()
+	var stale []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan complete-scope section id: %w", err)
+		}
+		if _, retained := keep[id]; !retained {
+			stale = append(stale, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read complete-scope section ids: %w", err)
+	}
+	return stale, nil
+}
+
+func validateScopeCompleteness(marker ScopeCompleteness) error {
+	if marker.Version != 2 {
+		return fmt.Errorf("completeness version must be 2, got %d", marker.Version)
+	}
+	if marker.CoursesTotal < 0 || marker.CoursesScanned < 0 {
+		return fmt.Errorf("completeness course counts must be nonnegative")
+	}
+	if marker.CoursesTotal != marker.CoursesScanned {
+		return fmt.Errorf("completeness total %d does not match scanned count %d", marker.CoursesTotal, marker.CoursesScanned)
+	}
+	if marker.Truncated {
+		return fmt.Errorf("completeness marker must not be truncated")
+	}
+	if marker.Catalogs == nil {
+		return fmt.Errorf("completeness catalogs must be a non-null array")
+	}
+	if len(marker.Catalogs) != marker.CoursesTotal {
+		return fmt.Errorf("completeness catalog count %d does not match courses total %d", len(marker.Catalogs), marker.CoursesTotal)
+	}
+	previous := ""
+	for i, catalog := range marker.Catalogs {
+		normalized, err := normalizeCompletenessCatalog(catalog)
+		if err != nil {
+			return err
+		}
+		if catalog != normalized {
+			return fmt.Errorf("completeness catalog %q is not normalized as %q", catalog, normalized)
+		}
+		if i > 0 && catalog <= previous {
+			if catalog == previous {
+				return fmt.Errorf("completeness catalog %q is duplicated", catalog)
+			}
+			return fmt.Errorf("completeness catalogs are not sorted: %q precedes %q", previous, catalog)
+		}
+		previous = catalog
+	}
+	return nil
+}
+
+func normalizeCompletenessCatalog(catalog string) (string, error) {
+	catalog = strings.TrimSpace(catalog)
+	if catalog == "" {
+		return "", fmt.Errorf("completeness catalogs contain an empty value")
+	}
+	allDigits := true
+	for _, r := range catalog {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		for len(catalog) < 3 {
+			catalog = "0" + catalog
+		}
+		return catalog, nil
+	}
+	return strings.ToUpper(catalog), nil
 }
 
 func saveScopeCompletenessTx(tx *sql.Tx, scopeKey string, marker ScopeCompleteness) error {
@@ -1522,6 +1658,13 @@ func saveScopeCompletenessTx(tx *sql.Tx, scopeKey string, marker ScopeCompletene
 // SaveCompleteScheduleScope atomically stores the section rows, their seat
 // snapshots, and the marker that authorizes complete whole-subject reads.
 func (s *Store) SaveCompleteScheduleScope(scopeKey string, items []json.RawMessage, snapshots []SeatSnapshot, marker ScopeCompleteness) error {
+	if err := validateScopeCompleteness(marker); err != nil {
+		return fmt.Errorf("validate scope completeness: %w", err)
+	}
+	scope, err := parseScheduleScopeKey(scopeKey)
+	if err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1531,7 +1674,11 @@ func (s *Store) SaveCompleteScheduleScope(scopeKey string, items []json.RawMessa
 	}
 	defer tx.Rollback()
 
-	if err := s.upsertCompleteSectionsTx(tx, items); err != nil {
+	keep, err := s.upsertCompleteSectionsTx(tx, items)
+	if err != nil {
+		return err
+	}
+	if err := pruneCompleteScheduleScopeTx(tx, scope, keep); err != nil {
 		return err
 	}
 	for _, snapshot := range snapshots {
@@ -1608,6 +1755,9 @@ func (s *Store) GetSyncState(resourceType string) (cursor string, lastSynced tim
 // changing any section rows. SaveCompleteScheduleScope should be used when the
 // marker accompanies newly fetched rows so all writes share one transaction.
 func (s *Store) SaveScopeCompleteness(scopeKey string, marker ScopeCompleteness) error {
+	if err := validateScopeCompleteness(marker); err != nil {
+		return fmt.Errorf("validate scope completeness: %w", err)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
@@ -1628,12 +1778,16 @@ func (s *Store) SaveScopeCompleteness(scopeKey string, marker ScopeCompleteness)
 // GetScopeCompleteness returns ok=true only for a current, untruncated marker
 // whose persisted catalog JSON and course counts prove complete coverage.
 func (s *Store) GetScopeCompleteness(scopeKey string) (ScopeCompleteness, bool, error) {
+	return getScopeCompleteness(context.Background(), s.db, scopeKey)
+}
+
+func getScopeCompleteness(ctx context.Context, querier sqlContextQuerier, scopeKey string) (ScopeCompleteness, bool, error) {
 	var marker ScopeCompleteness
 	var version, coursesTotal, coursesScanned sql.NullInt64
 	var discoverySource, catalogsJSON sql.NullString
 	var truncated sql.NullBool
 	var syncedAt sql.NullTime
-	err := s.db.QueryRowContext(context.Background(),
+	err := querier.QueryRowContext(ctx,
 		`SELECT completeness_version, discovery_source, catalogs_json, courses_total, courses_scanned, truncated, last_synced_at
 		 FROM sync_state WHERE resource_type = ?`,
 		scopeKey,
@@ -1660,7 +1814,38 @@ func (s *Store) GetScopeCompleteness(scopeKey string) (ScopeCompleteness, bool, 
 	marker.CoursesScanned = int(coursesScanned.Int64)
 	marker.Truncated = truncated.Bool
 	marker.SyncedAt = syncedAt.Time
+	if err := validateScopeCompleteness(marker); err != nil {
+		return ScopeCompleteness{}, false, nil
+	}
 	return marker, true, nil
+}
+
+// ReadCompleteScheduleScope reads the completeness marker and every typed row
+// it certifies from one SQLite snapshot, so a concurrent replacement cannot
+// pair a marker from one generation with rows from another.
+func (s *Store) ReadCompleteScheduleScope(ctx context.Context, scopeKey string) ([]json.RawMessage, ScopeCompleteness, bool, error) {
+	scope, err := parseScheduleScopeKey(scopeKey)
+	if err != nil {
+		return nil, ScopeCompleteness{}, false, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, ScopeCompleteness{}, false, fmt.Errorf("starting complete-scope read transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	marker, ok, err := getScopeCompleteness(ctx, tx, scopeKey)
+	if err != nil || !ok {
+		return nil, marker, ok, err
+	}
+	rows, err := sectionsByScope(ctx, tx, scope.college, scope.term, scope.subject, "")
+	if err != nil {
+		return nil, ScopeCompleteness{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, ScopeCompleteness{}, false, fmt.Errorf("commit complete-scope read transaction: %w", err)
+	}
+	return rows, marker, true, nil
 }
 
 // SaveSyncCursor stores the pagination cursor for a resource type.

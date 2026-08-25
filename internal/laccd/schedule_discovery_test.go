@@ -110,6 +110,30 @@ func TestScheduleAPIDiscoveryCatalogsAcceptsEmptyOfferings(t *testing.T) {
 	}
 }
 
+func TestScheduleAPIDiscoveryCatalogsRejectsInvalidEmptyEnvelopeSchema(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "missing subjects", body: `{"termname":"Fall 2026"}`},
+		{name: "null subjects", body: `{"termname":"Fall 2026","subjects":null}`},
+		{name: "missing courses", body: `{"termname":"Fall 2026","subjects":[{"code":"MULTIMD"}]}`},
+		{name: "null courses", body: `{"termname":"Fall 2026","subjects":[{"code":"MULTIMD","courses":null}]}`},
+		{name: "unrelated empty subject", body: `{"termname":"Fall 2026","subjects":[{"code":"MATH","courses":[]}]}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := jsonServer(t, http.StatusOK, tt.body)
+			d := NewScheduleAPIDiscovery(srv.URL, srv.Client(), cliutil.NewAdaptiveLimiter(0))
+
+			if got, err := d.Catalogs(context.Background(), "LAMC", "2268", "MULTIMD"); err == nil {
+				t.Fatalf("Catalogs = %v, nil; want schema error", got)
+			}
+		})
+	}
+}
+
 func TestScheduleAPIDiscoveryCatalogsRejectsMalformedJSON(t *testing.T) {
 	srv := jsonServer(t, http.StatusOK, `{"termname":`)
 	d := NewScheduleAPIDiscovery(srv.URL, srv.Client(), cliutil.NewAdaptiveLimiter(0))

@@ -163,7 +163,7 @@ func readCompleteLocalScope(ctx context.Context, dbPath, college, term, subject 
 	}
 	defer st.Close()
 
-	marker, ok, err = st.GetScopeCompleteness(scheduleScopeKey(college, term, subject))
+	rows, marker, ok, err := st.ReadCompleteScheduleScope(ctx, scheduleScopeKey(college, term, subject))
 	if err != nil || !ok {
 		return nil, marker, false, err
 	}
@@ -176,10 +176,7 @@ func readCompleteLocalScope(ctx context.Context, dbPath, college, term, subject 
 		selectedSet[strings.ToUpper(strings.TrimSpace(catalog))] = true
 	}
 
-	secs, err := sectionsFromStore(st, college, term, subject, "")
-	if err != nil {
-		return nil, store.ScopeCompleteness{}, false, err
-	}
+	secs := sectionsFromRows(rows)
 	bounded := make([]laccd.Section, 0, len(secs))
 	for _, section := range secs {
 		if selectedSet[strings.ToUpper(strings.TrimSpace(section.Catalog))] {
@@ -204,6 +201,10 @@ func sectionsFromStore(st *store.Store, college, term, subject, catalog string) 
 	if err != nil {
 		return nil, err
 	}
+	return sectionsFromRows(rows), nil
+}
+
+func sectionsFromRows(rows []json.RawMessage) []laccd.Section {
 	out := make([]laccd.Section, 0, len(rows))
 	for _, r := range rows {
 		var s laccd.Section
@@ -213,7 +214,7 @@ func sectionsFromStore(st *store.Store, college, term, subject, catalog string) 
 		out = append(out, s)
 	}
 	laccd.SortSections(out)
-	return out, nil
+	return out
 }
 
 // resolveSectionScope finds a section's (college, term, subject, catalog) from

@@ -43,10 +43,19 @@ type sqlContextExecutor interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
+type sqlContextQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
 // SectionsByScope returns the raw section JSON for sections matching the given
 // scope. Empty filter fields are ignored, so passing only college+term+subject
 // returns every section of a subject. catalog narrows to one course.
 func (s *Store) SectionsByScope(college, term, subject, catalog string) ([]json.RawMessage, error) {
+	return sectionsByScope(context.Background(), s.db, college, term, subject, catalog)
+}
+
+func sectionsByScope(ctx context.Context, querier sqlContextQuerier, college, term, subject, catalog string) ([]json.RawMessage, error) {
 	var where []string
 	var args []any
 	add := func(col, val string) {
@@ -69,7 +78,7 @@ func (s *Store) SectionsByScope(college, term, subject, catalog string) ([]json.
 	}
 	query += " ORDER BY catalog, section"
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := querier.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query sections: %w", err)
 	}

@@ -4,9 +4,13 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 )
@@ -152,6 +156,66 @@ func TestScopeCompleteness_LegacyInvalidAndIncompleteMarkersAreRejected(t *testi
 			truncated:  false,
 			lastSynced: "2026-08-25T19:30:00Z",
 		},
+		{
+			name:       "negative course counts",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["003"]`,
+			total:      -1,
+			scanned:    -1,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "catalog count mismatch",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["003"]`,
+			total:      2,
+			scanned:    2,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "unnormalized numeric catalog",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["7"]`,
+			total:      1,
+			scanned:    1,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "duplicate catalogs",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["003","003"]`,
+			total:      2,
+			scanned:    2,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "unsorted catalogs",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["125","003"]`,
+			total:      2,
+			scanned:    2,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
+		{
+			name:       "unnormalized alphanumeric catalog",
+			version:    2,
+			source:     "laccd-schedule-api",
+			catalogs:   `["c1000"]`,
+			total:      1,
+			scanned:    1,
+			truncated:  false,
+			lastSynced: "2026-08-25T19:30:00Z",
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,6 +242,51 @@ func TestScopeCompleteness_LegacyInvalidAndIncompleteMarkersAreRejected(t *testi
 			}
 			if ok {
 				t.Fatal("invalid or incomplete marker reported complete")
+			}
+		})
+	}
+}
+
+func TestScopeCompleteness_SaveRejectsInvalidMarkerShape(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ScopeCompleteness)
+	}{
+		{name: "old version", mutate: func(m *ScopeCompleteness) { m.Version = 1 }},
+		{name: "negative total", mutate: func(m *ScopeCompleteness) { m.CoursesTotal = -1 }},
+		{name: "negative scanned", mutate: func(m *ScopeCompleteness) { m.CoursesScanned = -1 }},
+		{name: "unequal complete counts", mutate: func(m *ScopeCompleteness) { m.CoursesScanned = 1 }},
+		{name: "truncated marker", mutate: func(m *ScopeCompleteness) { m.Truncated = true }},
+		{name: "catalog count mismatch", mutate: func(m *ScopeCompleteness) { m.CoursesTotal = 3; m.CoursesScanned = 3 }},
+		{name: "nil catalogs", mutate: func(m *ScopeCompleteness) { m.Catalogs = nil; m.CoursesTotal = 0; m.CoursesScanned = 0 }},
+		{name: "unnormalized numeric catalog", mutate: func(m *ScopeCompleteness) { m.Catalogs = []string{"7", "125"} }},
+		{name: "unnormalized alphanumeric catalog", mutate: func(m *ScopeCompleteness) { m.Catalogs = []string{"003", "c1000"} }},
+		{name: "duplicate catalogs", mutate: func(m *ScopeCompleteness) { m.Catalogs = []string{"003", "003"} }},
+		{name: "unsorted catalogs", mutate: func(m *ScopeCompleteness) { m.Catalogs = []string{"125", "003"} }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			defer s.Close()
+
+			marker := ScopeCompleteness{
+				Version: 2, DiscoverySource: "laccd-schedule-api", Catalogs: []string{"003", "125"},
+				CoursesTotal: 2, CoursesScanned: 2, SyncedAt: time.Date(2026, time.August, 25, 20, 0, 0, 0, time.UTC),
+			}
+			tt.mutate(&marker)
+			if err := s.SaveScopeCompleteness("sections:LAMC:2258:CINEMA", marker); err == nil {
+				t.Fatal("SaveScopeCompleteness accepted an invalid marker")
+			}
+			var rows int
+			if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM sync_state`).Scan(&rows); err != nil {
+				t.Fatalf("count sync_state: %v", err)
+			}
+			if rows != 0 {
+				t.Fatalf("sync_state rows = %d, want 0 after rejected write", rows)
 			}
 		})
 	}
@@ -222,6 +331,232 @@ func TestScopeCompleteness_CompleteScheduleScopeCommitsAllWrites(t *testing.T) {
 	}
 	if !ok || !reflect.DeepEqual(got, marker) {
 		t.Fatalf("marker = %#v, ok=%v, want %#v, true", got, ok, marker)
+	}
+}
+
+func TestScopeCompleteness_CompleteScheduleScopeReplacesExactRows(t *testing.T) {
+	tests := []struct {
+		name          string
+		items         []json.RawMessage
+		catalogs      []string
+		wantIDs       []string
+		wantSnapshots int
+	}{
+		{
+			name:          "fewer rows",
+			items:         []json.RawMessage{completeScopeItem("11111", "003", "RetainedCourse")},
+			catalogs:      []string{"003"},
+			wantIDs:       []string{"11111"},
+			wantSnapshots: 3,
+		},
+		{
+			name:          "zero rows",
+			items:         []json.RawMessage{},
+			catalogs:      []string{},
+			wantIDs:       []string{},
+			wantSnapshots: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			defer s.Close()
+
+			const scopeKey = "sections:LAMC:2258:CINEMA"
+			firstItems := []json.RawMessage{
+				completeScopeItem("11111", "003", "RetainedCourse"),
+				completeScopeItem("22222", "125", "ObsoleteCourse"),
+			}
+			firstMarker := completeScopeMarker(time.Date(2026, time.August, 25, 20, 0, 0, 0, time.UTC), "003", "125")
+			if err := s.SaveCompleteScheduleScope(scopeKey, firstItems, snapshotsForItems(firstItems, firstMarker.SyncedAt), firstMarker); err != nil {
+				t.Fatalf("first complete sync: %v", err)
+			}
+
+			secondMarker := completeScopeMarker(time.Date(2026, time.August, 25, 21, 0, 0, 0, time.UTC), tt.catalogs...)
+			if err := s.SaveCompleteScheduleScope(scopeKey, tt.items, snapshotsForItems(tt.items, secondMarker.SyncedAt), secondMarker); err != nil {
+				t.Fatalf("second complete sync: %v", err)
+			}
+
+			if got := sectionIDsByScope(t, s, "LAMC", "2258", "CINEMA"); !slices.Equal(got, tt.wantIDs) {
+				t.Fatalf("scope section IDs = %v, want %v", got, tt.wantIDs)
+			}
+			for _, table := range []string{"sections", "resources", "sections_fts", "resources_fts"} {
+				var got int
+				if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+					t.Fatalf("count %s: %v", table, err)
+				}
+				if got != len(tt.wantIDs) {
+					t.Fatalf("%s rows = %d, want %d", table, got, len(tt.wantIDs))
+				}
+			}
+			var snapshotCount int
+			if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM seat_snapshots`).Scan(&snapshotCount); err != nil {
+				t.Fatalf("count snapshots: %v", err)
+			}
+			if snapshotCount != tt.wantSnapshots {
+				t.Fatalf("seat snapshots = %d, want preserved history count %d", snapshotCount, tt.wantSnapshots)
+			}
+			gotMarker, ok, err := s.GetScopeCompleteness(scopeKey)
+			if err != nil || !ok || !reflect.DeepEqual(gotMarker, secondMarker) {
+				t.Fatalf("marker = %#v, ok=%v, err=%v; want %#v, true, nil", gotMarker, ok, err, secondMarker)
+			}
+		})
+	}
+}
+
+func TestScopeCompleteness_CompleteScheduleScopeRollsBackAfterPrune(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	const scopeKey = "sections:LAMC:2258:CINEMA"
+	firstItems := []json.RawMessage{
+		completeScopeItem("11111", "003", "OriginalRetainedCourse"),
+		completeScopeItem("22222", "125", "OriginalObsoleteCourse"),
+	}
+	firstMarker := completeScopeMarker(time.Date(2026, time.August, 25, 20, 0, 0, 0, time.UTC), "003", "125")
+	if err := s.SaveCompleteScheduleScope(scopeKey, firstItems, snapshotsForItems(firstItems, firstMarker.SyncedAt), firstMarker); err != nil {
+		t.Fatalf("first complete sync: %v", err)
+	}
+	if _, err := s.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_replacement_marker
+		BEFORE UPDATE ON sync_state
+		WHEN OLD.resource_type = '`+scopeKey+`'
+		BEGIN SELECT RAISE(ABORT, 'forced replacement marker failure'); END`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+
+	secondItems := []json.RawMessage{completeScopeItem("11111", "003", "UpdatedRetainedCourse")}
+	secondMarker := completeScopeMarker(time.Date(2026, time.August, 25, 21, 0, 0, 0, time.UTC), "003")
+	if err := s.SaveCompleteScheduleScope(scopeKey, secondItems, snapshotsForItems(secondItems, secondMarker.SyncedAt), secondMarker); err == nil {
+		t.Fatal("replacement sync succeeded despite forced post-prune marker failure")
+	}
+
+	if got := sectionIDsByScope(t, s, "LAMC", "2258", "CINEMA"); !slices.Equal(got, []string{"11111", "22222"}) {
+		t.Fatalf("scope section IDs after rollback = %v, want original rows", got)
+	}
+	for _, table := range []string{"sections", "resources", "sections_fts", "resources_fts", "seat_snapshots"} {
+		var got int
+		if err := s.DB().QueryRowContext(t.Context(), `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if got != 2 {
+			t.Fatalf("%s rows after rollback = %d, want 2", table, got)
+		}
+	}
+	gotMarker, ok, err := s.GetScopeCompleteness(scopeKey)
+	if err != nil || !ok || !reflect.DeepEqual(gotMarker, firstMarker) {
+		t.Fatalf("marker after rollback = %#v, ok=%v, err=%v; want %#v, true, nil", gotMarker, ok, err, firstMarker)
+	}
+}
+
+func TestScopeCompleteness_ReadCompleteScheduleScopeReturnsOneGeneration(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	const scopeKey = "sections:LAMC:2258:CINEMA"
+	items := []json.RawMessage{
+		completeScopeItem("11111", "003", "FirstCourse"),
+		completeScopeItem("22222", "125", "SecondCourse"),
+	}
+	marker := completeScopeMarker(time.Date(2026, time.August, 25, 20, 0, 0, 0, time.UTC), "003", "125")
+	if err := s.SaveCompleteScheduleScope(scopeKey, items, snapshotsForItems(items, marker.SyncedAt), marker); err != nil {
+		t.Fatalf("save complete scope: %v", err)
+	}
+
+	rows, gotMarker, ok, err := s.ReadCompleteScheduleScope(t.Context(), scopeKey)
+	if err != nil {
+		t.Fatalf("read complete scope: %v", err)
+	}
+	if !ok {
+		t.Fatal("read complete scope reported valid marker incomplete")
+	}
+	if !reflect.DeepEqual(gotMarker, marker) {
+		t.Fatalf("marker = %#v, want %#v", gotMarker, marker)
+	}
+	if got := sectionIDs(rows); !slices.Equal(got, []string{"11111", "22222"}) {
+		t.Fatalf("row IDs = %v, want [11111 22222]", got)
+	}
+}
+
+func TestScopeCompleteness_ReadCompleteScheduleScopeNeverMixesConcurrentGenerations(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer s.Close()
+
+	const scopeKey = "sections:LAMC:2258:CINEMA"
+	timeA := time.Date(2026, time.August, 25, 20, 0, 0, 0, time.UTC)
+	timeB := time.Date(2026, time.August, 25, 21, 0, 0, 0, time.UTC)
+	itemsA := []json.RawMessage{completeScopeItem("11111", "003", "GenerationA")}
+	itemsB := []json.RawMessage{completeScopeItem("22222", "125", "GenerationB")}
+	markerA := completeScopeMarker(timeA, "003")
+	markerB := completeScopeMarker(timeB, "125")
+	if err := s.SaveCompleteScheduleScope(scopeKey, itemsA, nil, markerA); err != nil {
+		t.Fatalf("seed generation A: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	writerErr := make(chan error, 1)
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		for i := 0; i < 200; i++ {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			items, marker := itemsA, markerA
+			if i%2 == 0 {
+				items, marker = itemsB, markerB
+			}
+			if err := s.SaveCompleteScheduleScope(scopeKey, items, nil, marker); err != nil {
+				writerErr <- err
+				return
+			}
+		}
+	}()
+
+	for i := 0; i < 400; i++ {
+		rows, marker, ok, err := s.ReadCompleteScheduleScope(t.Context(), scopeKey)
+		if err != nil {
+			t.Fatalf("read generation %d: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("read generation %d reported incomplete", i)
+		}
+		ids := sectionIDs(rows)
+		switch {
+		case marker.SyncedAt.Equal(timeA):
+			if !slices.Equal(ids, []string{"11111"}) {
+				t.Fatalf("generation A marker paired with rows %v", ids)
+			}
+		case marker.SyncedAt.Equal(timeB):
+			if !slices.Equal(ids, []string{"22222"}) {
+				t.Fatalf("generation B marker paired with rows %v", ids)
+			}
+		default:
+			t.Fatalf("unexpected marker generation timestamp %s", marker.SyncedAt)
+		}
+	}
+	cancel()
+	writer.Wait()
+	select {
+	case err := <-writerErr:
+		t.Fatalf("concurrent writer: %v", err)
+	default:
 	}
 }
 
@@ -376,4 +711,58 @@ func TestScopeCompleteness_SnapshotInsertSemanticsAreShared(t *testing.T) {
 	if snapshots[1].Available != nil || snapshots[1].WaitlistTotal == nil || *snapshots[1].WaitlistTotal != waitlist {
 		t.Fatalf("transactional snapshot nullable counts = %#v, want nil available and waitlist=%d", snapshots[1], waitlist)
 	}
+}
+
+func completeScopeItem(classNbr, catalog, title string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(
+		`{"id":%q,"class_nbr":%q,"college":"LAMC","term":"2258","subject":"CINEMA","catalog":%q,"title":%q}`,
+		classNbr, classNbr, catalog, title,
+	))
+}
+
+func completeScopeMarker(syncedAt time.Time, catalogs ...string) ScopeCompleteness {
+	return ScopeCompleteness{
+		Version: 2, DiscoverySource: "laccd-schedule-api", Catalogs: slices.Clone(catalogs),
+		CoursesTotal: len(catalogs), CoursesScanned: len(catalogs), SyncedAt: syncedAt,
+	}
+}
+
+func snapshotsForItems(items []json.RawMessage, observedAt time.Time) []SeatSnapshot {
+	result := make([]SeatSnapshot, 0, len(items))
+	for _, item := range items {
+		var section struct {
+			ClassNbr string `json:"class_nbr"`
+		}
+		if err := json.Unmarshal(item, &section); err != nil {
+			panic(err)
+		}
+		result = append(result, SeatSnapshot{
+			ClassNbr: section.ClassNbr, College: "LAMC", Term: "2258", Subject: "CINEMA", Status: "Open", ObservedAt: observedAt,
+		})
+	}
+	return result
+}
+
+func sectionIDsByScope(t *testing.T, s *Store, college, term, subject string) []string {
+	t.Helper()
+	rows, err := s.SectionsByScope(college, term, subject, "")
+	if err != nil {
+		t.Fatalf("read scope rows: %v", err)
+	}
+	return sectionIDs(rows)
+}
+
+func sectionIDs(rows []json.RawMessage) []string {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var section struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(row, &section); err != nil {
+			panic(err)
+		}
+		ids = append(ids, section.ID)
+	}
+	slices.Sort(ids)
+	return ids
 }

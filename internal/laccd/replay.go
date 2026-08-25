@@ -178,14 +178,23 @@ func verifyReplayDiscovery(manifest ReplayManifest, allowlistedCatalogs map[stri
 	if responseSeason, responseYear, valid := scheduleTermTokens(listing.TermName); !valid || responseSeason != season || responseYear != year {
 		return fmt.Errorf("replay discovery term %q does not match manifest term %q", listing.TermName, manifest.Term)
 	}
-	for _, entry := range listing.Subjects {
-		if len(entry.Courses) == 0 {
+	if listing.Subjects == nil {
+		return fmt.Errorf("replay discovery subjects must be present and non-null")
+	}
+	foundSubject := false
+	for _, entry := range *listing.Subjects {
+		if entry.Courses == nil {
+			return fmt.Errorf("replay discovery courses for subject %q must be present and non-null", entry.Code)
+		}
+		courses := *entry.Courses
+		if len(courses) == 0 && normalizeReplaySubject(entry.Code) != manifest.Subject {
 			continue
 		}
 		if normalizeReplaySubject(entry.Code) != manifest.Subject {
 			return fmt.Errorf("replay discovery has courses for unexpected subject %q", entry.Code)
 		}
-		for _, course := range entry.Courses {
+		foundSubject = true
+		for _, course := range courses {
 			catalog, err := normalizeDiscoveredCatalog(course.CatalogNbr)
 			if err != nil {
 				return fmt.Errorf("normalize replay discovery catalog: %w", err)
@@ -194,6 +203,9 @@ func verifyReplayDiscovery(manifest ReplayManifest, allowlistedCatalogs map[stri
 				return fmt.Errorf("discovered catalog %q is not in the replay manifest", catalog)
 			}
 		}
+	}
+	if len(*listing.Subjects) > 0 && !foundSubject {
+		return fmt.Errorf("replay discovery does not contain requested subject %q", manifest.Subject)
 	}
 	return nil
 }

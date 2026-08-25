@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -43,13 +42,13 @@ type scheduleAPIDiscovery struct {
 }
 
 type scheduleAPIListing struct {
-	TermName string               `json:"termname"`
-	Subjects []scheduleAPISubject `json:"subjects"`
+	TermName string                `json:"termname"`
+	Subjects *[]scheduleAPISubject `json:"subjects"`
 }
 
 type scheduleAPISubject struct {
-	Code    string              `json:"code"`
-	Courses []scheduleAPICourse `json:"courses"`
+	Code    string               `json:"code"`
+	Courses *[]scheduleAPICourse `json:"courses"`
 }
 
 type scheduleAPICourse struct {
@@ -96,7 +95,10 @@ func (d *scheduleAPIDiscovery) Catalogs(ctx context.Context, college, term, subj
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	body, err := readBoundedBody(resp.Body, maxResponseBodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("reading schedule discovery response: %w", err)
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		d.limiter.OnRateLimit()
 		return nil, &cliutil.RateLimitError{URL: rawURL, RetryAfter: cliutil.RetryAfter(resp), Body: snippet(string(body))}
@@ -113,18 +115,27 @@ func (d *scheduleAPIDiscovery) Catalogs(ctx context.Context, college, term, subj
 	if responseSeason, responseYear, valid := scheduleTermTokens(listing.TermName); !valid || responseSeason != season || responseYear != year {
 		return nil, fmt.Errorf("schedule discovery response term %q does not match requested term %q", listing.TermName, term)
 	}
+	if listing.Subjects == nil {
+		return nil, fmt.Errorf("schedule discovery response subjects must be present and non-null")
+	}
 
 	seen := make(map[string]bool)
 	var catalogs []string
-	for _, entry := range listing.Subjects {
-		if len(entry.Courses) == 0 {
-			continue
-		}
+	foundSubject := false
+	for _, entry := range *listing.Subjects {
 		entryCode := strings.TrimSpace(entry.Code)
-		if entryCode == "" || !strings.EqualFold(entryCode, subject) {
+		if entry.Courses == nil {
+			return nil, fmt.Errorf("schedule discovery response courses for subject %q must be present and non-null", entry.Code)
+		}
+		courses := *entry.Courses
+		if !strings.EqualFold(entryCode, subject) {
+			if len(courses) == 0 {
+				continue
+			}
 			return nil, fmt.Errorf("schedule discovery response has courses for unexpected subject %q", entry.Code)
 		}
-		for _, course := range entry.Courses {
+		foundSubject = true
+		for _, course := range courses {
 			catalog, err := normalizeDiscoveredCatalog(course.CatalogNbr)
 			if err != nil {
 				return nil, err
@@ -136,6 +147,9 @@ func (d *scheduleAPIDiscovery) Catalogs(ctx context.Context, college, term, subj
 			seen[catalog] = true
 			catalogs = append(catalogs, catalog)
 		}
+	}
+	if len(*listing.Subjects) > 0 && !foundSubject {
+		return nil, fmt.Errorf("schedule discovery response does not contain requested subject %q", subject)
 	}
 	sort.Strings(catalogs)
 	return catalogs, nil

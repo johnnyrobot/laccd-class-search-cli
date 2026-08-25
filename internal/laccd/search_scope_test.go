@@ -231,6 +231,9 @@ func TestSearchScopeAbortsOnCatalogFailure(t *testing.T) {
 			if tc.wantOverCap && !errors.Is(err, ErrOverCap) {
 				t.Fatalf("SearchScope error = %v, want ErrOverCap", err)
 			}
+			if !strings.Contains(err.Error(), "search catalog 107:") {
+				t.Fatalf("SearchScope error = %v, want catalog 107 context", err)
+			}
 			if gotCalls := server.catalogCalls(); !slices.Equal(gotCalls, []string{"003", "107"}) {
 				t.Fatalf("catalog calls = %v, want abort after [003 107]", gotCalls)
 			}

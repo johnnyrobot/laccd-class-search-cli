@@ -104,7 +104,10 @@ func (c *Client) do(ctx context.Context, method, rawURL string, body url.Values)
 		return "", err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	data, err := readBoundedBody(resp.Body, maxResponseBodyBytes)
+	if err != nil {
+		return "", fmt.Errorf("reading PeopleSoft response: %w", err)
+	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		c.limiter.OnRateLimit()
 		return "", &cliutil.RateLimitError{URL: rawURL, RetryAfter: cliutil.RetryAfter(resp), Body: snippet(string(data))}
@@ -245,7 +248,7 @@ func (c *Client) SearchScope(ctx context.Context, college, term, subject, catalo
 	for _, cat := range selected {
 		secs, err := c.SearchSections(ctx, college, term, subject, cat)
 		if err != nil {
-			return ScopeResult{}, err
+			return ScopeResult{}, fmt.Errorf("search catalog %s: %w", cat, err)
 		}
 		add(secs)
 	}

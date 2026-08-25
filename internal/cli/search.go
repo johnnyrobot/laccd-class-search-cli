@@ -46,8 +46,9 @@ client-side filters for open seats, instruction mode, instructor, and meeting
 days. Pass --catalog to get every section of one course; without it the command
 fans out one request per course in the subject so the result is complete.
 
-Results are mirrored into the local SQLite store, so later runs with
---data-source local work offline.`, "\n"),
+Live searches may refresh section rows, but they do not certify a complete
+whole-subject local mirror. Before a whole-subject --data-source local search,
+run sync with the same scope and --max-courses 0.`, "\n"),
 		Example: strings.Trim(`
   laccd-class-search-pp-cli search --college LAPC --term 2268 --subject MATH --catalog 261
   laccd-class-search-pp-cli search --college ELAC --term 2268 --subject ENGL --open --agent

@@ -173,8 +173,11 @@ fan-out. Negative values are usage errors. The command defaults are 30 for
 `search` and 50 for `sync`; use 0 when a complete mirror is required.
 
 Whole-subject local and automatic fallback reads require a valid version-2
-mirror marker: `completeness_version=2`, a non-null valid ordered catalog list,
-equal total/scanned counts, `truncated=false`, and a sync timestamp.
+mirror marker: `completeness_version=2`, nonnegative counts, a non-null
+normalized, unique, sorted catalog list whose length equals `courses_total`,
+equal total/scanned counts, `truncated=false`, and a sync timestamp. Complete
+syncs exactly replace current scope rows while retaining seat history; local
+reads take their marker and rows from one SQLite generation.
 `discovery_source=laccd-schedule-api` is retained as provenance, not as an
 additional exact-value validity gate. Older mirrors remain on disk and are
 still usable for an explicit `--catalog` read, but a whole-subject local read
