@@ -21,9 +21,9 @@ import (
 // HTTP. A cookie-jar warm-up GET establishes the guest session; after that the
 // list path is a deep-link GET and section detail is a stateful ICAction POST.
 type Client struct {
-	BaseURL string
-	http    *http.Client
-	limiter *cliutil.AdaptiveLimiter
+	BaseURL   string
+	http      *http.Client
+	limiter   *cliutil.AdaptiveLimiter
 	discovery CourseDiscovery
 
 	warmMu sync.Mutex
@@ -37,7 +37,7 @@ var ErrOverCap = fmt.Errorf("search matched too many classes to render; narrow i
 // New builds a Client. baseURL comes from config (the verify pipeline points it
 // at a mock server). ratePerSec <= 0 disables pacing. timeout bounds each HTTP
 // call; the per-command --timeout is also applied via boundCtx at the call site.
-func New(baseURL string, ratePerSec float64, timeout time.Duration) *Client {
+func New(baseURL string, ratePerSec float64, timeout time.Duration, opts ...ClientOption) *Client {
 	jar, _ := cookiejar.New(nil)
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
@@ -46,11 +46,17 @@ func New(baseURL string, ratePerSec float64, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	return &Client{
+	client := &Client{
 		BaseURL: base,
 		http:    &http.Client{Jar: jar, Timeout: timeout},
 		limiter: cliutil.NewAdaptiveLimiter(ratePerSec),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(client)
+		}
+	}
+	return client
 }
 
 func (c *Client) componentURL() string { return c.BaseURL + ComponentPath }

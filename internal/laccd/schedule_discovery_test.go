@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 )
@@ -24,6 +25,15 @@ func TestScheduleAPIDiscoveryCatalogsNormalizesAndSorts(t *testing.T) {
 	}
 	if want := []string{"007", "110", "C1000"}; !slices.Equal(got, want) {
 		t.Fatalf("Catalogs=%v want %v", got, want)
+	}
+}
+
+func TestNewAppliesCourseDiscoveryOption(t *testing.T) {
+	discovery := courseDiscoveryStub{}
+	client := New("https://example.test", 0, time.Second, WithCourseDiscovery(discovery))
+
+	if client.discovery != discovery {
+		t.Fatalf("Client discovery = %T, want supplied %T", client.discovery, discovery)
 	}
 }
 
@@ -138,4 +148,10 @@ func jsonServer(t *testing.T, status int, body string) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+type courseDiscoveryStub struct{}
+
+func (courseDiscoveryStub) Catalogs(context.Context, string, string, string) ([]string, error) {
+	return nil, nil
 }
