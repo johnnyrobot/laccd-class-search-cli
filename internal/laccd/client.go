@@ -24,6 +24,7 @@ type Client struct {
 	BaseURL string
 	http    *http.Client
 	limiter *cliutil.AdaptiveLimiter
+	discovery CourseDiscovery
 
 	warmMu sync.Mutex
 	warmed bool
