@@ -64,6 +64,31 @@ func TestCompletenessReplayManifest(t *testing.T) {
 	}
 }
 
+func TestFixtureReplayRejectsMismatchedScope(t *testing.T) {
+	fixtures := filepath.Join("testdata", "completeness")
+	replay, err := StartFixtureReplay(fixtures)
+	if err != nil {
+		t.Fatalf("start fixture replay: %v", err)
+	}
+	t.Cleanup(replay.Close)
+	client := New(replay.URL(), 0, time.Second, WithCourseDiscovery(replay.Discovery()))
+
+	for _, tc := range []struct {
+		name                   string
+		college, term, subject string
+	}{
+		{name: "college", college: "NOT-LAMC", term: "2268", subject: "MULTIMD"},
+		{name: "term", college: "LAMC", term: "2266", subject: "MULTIMD"},
+		{name: "subject", college: "LAMC", term: "2268", subject: "CINEMA"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := client.SearchScope(context.Background(), tc.college, tc.term, tc.subject, "", 0); err == nil {
+				t.Fatalf("SearchScope accepted a %s outside the captured replay scope", tc.name)
+			}
+		})
+	}
+}
+
 func sortedClassNumbers(sections []Section) []string {
 	classNumbers := classNbrs(sections)
 	slices.Sort(classNumbers)

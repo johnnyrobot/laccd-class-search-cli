@@ -1,4 +1,7 @@
 {
+  "college": "LAMC",
+  "term": "2268",
+  "subject": "MULTIMD",
   "fixture_hashes": {
     "discovery-multimd.json": "4c7aba4b691f0fac58b471012bdbc7ab4b0c712d755a0bd4f6e4330f603b0376",
     "sections-100.html": "87de89507c6fa3fc113920bced9126c62d5eb3109ef9724ed6600eaf6c8988f1",

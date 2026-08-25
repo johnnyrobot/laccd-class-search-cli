@@ -4,6 +4,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -73,6 +75,38 @@ func TestRunReplaysManifestAndRejectsInvalidFixtureInputs(t *testing.T) {
 			t.Fatalf("run error = %v, want class-number oracle mismatch", err)
 		}
 	})
+
+	t.Run("rejects a discovered catalog outside the manifest allowlist", func(t *testing.T) {
+		fixtures := copyFixtures(t)
+		addDiscoveredCatalog(t, fixtures, "999")
+		if err := os.WriteFile(filepath.Join(fixtures, "sections-999.html"), []byte("unhashed catalog fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := run(replayArgs(fixtures), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), `discovered catalog "999" is not in the replay manifest`) {
+			t.Fatalf("run error = %v, want manifest allowlist rejection before serving 999", err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "college", args: []string{"--college", "NOT-LAMC"}},
+		{name: "term", args: []string{"--term", "2266"}},
+		{name: "subject", args: []string{"--subject", "CINEMA"}},
+	} {
+		t.Run("rejects a mismatched "+tc.name, func(t *testing.T) {
+			args := replayArgs(copyFixtures(t))
+			for i := 0; i < len(args); i += 2 {
+				if args[i] == tc.args[0] {
+					args[i+1] = tc.args[1]
+				}
+			}
+			if err := run(args, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "does not match captured replay scope") {
+				t.Fatalf("run error = %v, want scope mismatch", err)
+			}
+		})
+	}
 }
 
 func replayArgs(fixtures string) []string {
@@ -102,4 +136,56 @@ func copyFixtures(t *testing.T) string {
 		}
 	}
 	return destination
+}
+
+func addDiscoveredCatalog(t *testing.T, fixtures, catalog string) {
+	t.Helper()
+	fixturePath := filepath.Join(fixtures, "discovery-multimd.json")
+	data, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listing map[string]any
+	if err := json.Unmarshal(data, &listing); err != nil {
+		t.Fatal(err)
+	}
+	subjects := listing["subjects"].([]any)
+	subject := subjects[0].(map[string]any)
+	courses := subject["courses"].([]any)
+	subject["courses"] = append(courses, map[string]any{"catalogNbr": catalog})
+	data, err = json.Marshal(listing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixturePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestPath := filepath.Join(fixtures, "replay-manifest.json")
+	data, err = os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest replayManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.FixtureHashes["discovery-multimd.json"] = fixtureHash(t, fixturePath)
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func fixtureHash(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
