@@ -907,6 +907,12 @@ func TestMigrate_AddsColumnsOnUpgrade_SyncState(t *testing.T) {
 		"last_cursor",
 		"last_synced_at",
 		"total_count",
+		"completeness_version",
+		"discovery_source",
+		"catalogs_json",
+		"courses_total",
+		"courses_scanned",
+		"truncated",
 	} {
 		if !hasColumn[want] {
 			t.Fatalf("%s column missing from sync_state after migrate", want)

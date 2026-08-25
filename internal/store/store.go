@@ -73,6 +73,19 @@ type Store struct {
 	path    string
 }
 
+// ScopeCompleteness records the catalog coverage represented by one locally
+// mirrored whole-subject schedule scope. Catalogs is authoritative even when a
+// catalog returned zero section rows.
+type ScopeCompleteness struct {
+	Version         int
+	DiscoverySource string
+	Catalogs        []string
+	CoursesTotal    int
+	CoursesScanned  int
+	Truncated       bool
+	SyncedAt        time.Time
+}
+
 // Open opens or creates the SQLite store at dbPath using the background
 // context. Prefer OpenWithContext from a Cobra command so SIGINT during
 // a slow migration interrupts the open instead of stranding the caller.
@@ -320,6 +333,12 @@ func (s *Store) backfillColumns(ctx context.Context, conn *sql.Conn) error {
 		{table: "sync_state", column: "last_cursor", decl: "TEXT"},
 		{table: "sync_state", column: "last_synced_at", decl: "DATETIME"},
 		{table: "sync_state", column: "total_count", decl: "INTEGER DEFAULT 0"},
+		{table: "sync_state", column: "completeness_version", decl: "INTEGER"},
+		{table: "sync_state", column: "discovery_source", decl: "TEXT"},
+		{table: "sync_state", column: "catalogs_json", decl: "JSON"},
+		{table: "sync_state", column: "courses_total", decl: "INTEGER"},
+		{table: "sync_state", column: "courses_scanned", decl: "INTEGER"},
+		{table: "sync_state", column: "truncated", decl: "BOOLEAN"},
 	} {
 		if err := s.ensureColumn(ctx, conn, c.table, c.column, c.decl); err != nil {
 			return err
@@ -378,7 +397,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			resource_type TEXT PRIMARY KEY,
 			last_cursor TEXT,
 			last_synced_at DATETIME,
-			total_count INTEGER DEFAULT 0
+			total_count INTEGER DEFAULT 0,
+			completeness_version INTEGER,
+			discovery_source TEXT,
+			catalogs_json JSON,
+			courses_total INTEGER,
+			courses_scanned INTEGER,
+			truncated BOOLEAN
 		)`,
 		resourcesFTSCreateSQL,
 		`CREATE TABLE IF NOT EXISTS "sections" (
@@ -1429,6 +1454,102 @@ func (s *Store) UpsertBatch(resourceType string, items []json.RawMessage) (int, 
 	return stored, extractFailures, nil
 }
 
+func (s *Store) upsertCompleteSectionsTx(tx *sql.Tx, items []json.RawMessage) error {
+	for _, item := range items {
+		obj, err := DecodeJSONObject(item)
+		if err != nil {
+			return fmt.Errorf("unmarshaling sections: %w", err)
+		}
+		id := ExtractResourceID("sections", obj)
+		if id == "" {
+			return fmt.Errorf("missing id for sections")
+		}
+		storageID := resourceStorageID("sections", id, obj)
+		if err := s.upsertGenericResourceTx(tx, "sections", storageID, item); err != nil {
+			return fmt.Errorf("upserting sections/%s: %w", storageID, err)
+		}
+		if err := s.upsertSectionsTx(tx, storageID, obj, item); err != nil {
+			return fmt.Errorf("upserting typed sections/%s: %w", storageID, err)
+		}
+	}
+	return nil
+}
+
+func insertSeatSnapshotTx(tx *sql.Tx, snap SeatSnapshot) error {
+	if snap.ObservedAt.IsZero() {
+		snap.ObservedAt = time.Now()
+	}
+	_, err := tx.ExecContext(context.Background(),
+		`INSERT INTO seat_snapshots (class_nbr, college, term, subject, status, available, waitlist_total, observed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		snap.ClassNbr, snap.College, snap.Term, snap.Subject, snap.Status,
+		nullableInt(snap.Available), nullableInt(snap.WaitlistTotal), snap.ObservedAt.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("insert seat_snapshot: %w", err)
+	}
+	return nil
+}
+
+func saveScopeCompletenessTx(tx *sql.Tx, scopeKey string, marker ScopeCompleteness) error {
+	catalogsJSON, err := json.Marshal(marker.Catalogs)
+	if err != nil {
+		return fmt.Errorf("marshal completeness catalogs: %w", err)
+	}
+	syncedAt := marker.SyncedAt
+	if syncedAt.IsZero() {
+		syncedAt = time.Now()
+	}
+	_, err = tx.ExecContext(context.Background(),
+		`INSERT INTO sync_state
+		 (resource_type, last_synced_at, completeness_version, discovery_source, catalogs_json, courses_total, courses_scanned, truncated)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(resource_type) DO UPDATE SET
+		 last_synced_at = excluded.last_synced_at,
+		 completeness_version = excluded.completeness_version,
+		 discovery_source = excluded.discovery_source,
+		 catalogs_json = excluded.catalogs_json,
+		 courses_total = excluded.courses_total,
+		 courses_scanned = excluded.courses_scanned,
+		 truncated = excluded.truncated`,
+		scopeKey, syncedAt.UTC().Format(time.RFC3339), marker.Version, marker.DiscoverySource,
+		string(catalogsJSON), marker.CoursesTotal, marker.CoursesScanned, marker.Truncated,
+	)
+	if err != nil {
+		return fmt.Errorf("save scope completeness: %w", err)
+	}
+	return nil
+}
+
+// SaveCompleteScheduleScope atomically stores the section rows, their seat
+// snapshots, and the marker that authorizes complete whole-subject reads.
+func (s *Store) SaveCompleteScheduleScope(scopeKey string, items []json.RawMessage, snapshots []SeatSnapshot, marker ScopeCompleteness) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("starting complete-scope transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.upsertCompleteSectionsTx(tx, items); err != nil {
+		return err
+	}
+	for _, snapshot := range snapshots {
+		if err := insertSeatSnapshotTx(tx, snapshot); err != nil {
+			return err
+		}
+	}
+	if err := saveScopeCompletenessTx(tx, scopeKey, marker); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit complete-scope transaction: %w", err)
+	}
+	return nil
+}
+
 // SearchSections searches the sections_fts index with optional filters.
 func (s *Store) SearchSections(query string, limit int) ([]json.RawMessage, error) {
 	if limit <= 0 {
@@ -1483,6 +1604,65 @@ func (s *Store) GetSyncState(resourceType string) (cursor string, lastSynced tim
 		return "", time.Time{}, 0, nil
 	}
 	return
+}
+
+// SaveScopeCompleteness stores one whole-subject completeness marker without
+// changing any section rows. SaveCompleteScheduleScope should be used when the
+// marker accompanies newly fetched rows so all writes share one transaction.
+func (s *Store) SaveScopeCompleteness(scopeKey string, marker ScopeCompleteness) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return fmt.Errorf("starting completeness transaction: %w", err)
+	}
+	defer tx.Rollback()
+	if err := saveScopeCompletenessTx(tx, scopeKey, marker); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit completeness transaction: %w", err)
+	}
+	return nil
+}
+
+// GetScopeCompleteness returns ok=true only for a current, untruncated marker
+// whose persisted catalog JSON and course counts prove complete coverage.
+func (s *Store) GetScopeCompleteness(scopeKey string) (ScopeCompleteness, bool, error) {
+	var marker ScopeCompleteness
+	var version, coursesTotal, coursesScanned sql.NullInt64
+	var discoverySource, catalogsJSON sql.NullString
+	var truncated sql.NullBool
+	var syncedAt sql.NullTime
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT completeness_version, discovery_source, catalogs_json, courses_total, courses_scanned, truncated, last_synced_at
+		 FROM sync_state WHERE resource_type = ?`,
+		scopeKey,
+	).Scan(&version, &discoverySource, &catalogsJSON, &coursesTotal, &coursesScanned, &truncated, &syncedAt)
+	if err == sql.ErrNoRows {
+		return marker, false, nil
+	}
+	if err != nil {
+		return marker, false, fmt.Errorf("get scope completeness: %w", err)
+	}
+	if !version.Valid || !discoverySource.Valid || !catalogsJSON.Valid || !coursesTotal.Valid ||
+		!coursesScanned.Valid || !truncated.Valid || !syncedAt.Valid {
+		return marker, false, nil
+	}
+	if version.Int64 != 2 || coursesTotal.Int64 != coursesScanned.Int64 || truncated.Bool {
+		return marker, false, nil
+	}
+	if err := json.Unmarshal([]byte(catalogsJSON.String), &marker.Catalogs); err != nil {
+		return ScopeCompleteness{}, false, nil
+	}
+	marker.Version = int(version.Int64)
+	marker.DiscoverySource = discoverySource.String
+	marker.CoursesTotal = int(coursesTotal.Int64)
+	marker.CoursesScanned = int(coursesScanned.Int64)
+	marker.Truncated = truncated.Bool
+	marker.SyncedAt = syncedAt.Time
+	return marker, true, nil
 }
 
 // SaveSyncCursor stores the pagination cursor for a resource type.
