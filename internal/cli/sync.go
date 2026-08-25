@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
+	"github.com/johnnyrobot/laccd-class-search-cli/internal/store"
+	"github.com/spf13/cobra"
 )
 
 func newSyncCmd(flags *rootFlags) *cobra.Command {
+	return newSyncCmdWithScopeSearch(flags, liveSearch)
+}
+
+func newSyncCmdWithScopeSearch(flags *rootFlags, scopeSearch scopeSearchFunc) *cobra.Command {
 	var college, term, subject, catalog, dbPath string
 	var maxCourses int
 	// Framework-sync compatibility flags. This CLI syncs by college/term/subject
@@ -57,6 +62,12 @@ mirror is complete.`, "\n"),
 			if !laccd.IsCollege(college) {
 				return usageErr(fmt.Errorf("unknown college %q; run '%s colleges' for valid codes", college, appName))
 			}
+			if maxCourses < 0 {
+				return usageErr(fmt.Errorf("--max-courses must be zero or positive, got %d", maxCourses))
+			}
+			if strings.TrimSpace(catalog) == "" && laccd.TermLabel(term) == "" {
+				return usageErr(fmt.Errorf("unsupported term %q for whole-subject schedule sync", term))
+			}
 			ctx, cancel := boundCtx(cmd.Context(), flags)
 			defer cancel()
 
@@ -64,20 +75,31 @@ mirror is complete.`, "\n"),
 				maxCourses = 2
 			}
 
-			c, err := newLaccdClient(flags)
-			if err != nil {
-				return err
-			}
-			scope, err := c.SearchScope(ctx, college, term, subject, catalog, maxCourses)
+			scope, err := scopeSearch(ctx, flags, college, term, subject, catalog, maxCourses)
 			if err != nil {
 				return classifyAPIError(err, flags)
+			}
+			if scope.Truncated {
+				return usageErr(fmt.Errorf("sync would be incomplete after scanning %d of %d courses; pass --max-courses 0 or raise --max-courses to at least %d", scope.CoursesScanned, scope.CoursesTotal, scope.CoursesTotal))
 			}
 			st, err := openStore(ctx, dbPath)
 			if err != nil {
 				return err
 			}
 			defer st.Close()
-			if err := persistSections(st, scope.Sections, true); err != nil {
+			if strings.TrimSpace(catalog) == "" {
+				marker := store.ScopeCompleteness{
+					Version:         2,
+					DiscoverySource: "laccd-schedule-api",
+					Catalogs:        append([]string{}, scope.Catalogs...),
+					CoursesTotal:    scope.CoursesTotal,
+					CoursesScanned:  scope.CoursesScanned,
+					Truncated:       scope.Truncated,
+				}
+				if err := persistCompleteSections(st, scheduleScopeKey(college, term, subject), scope.Sections, marker); err != nil {
+					return err
+				}
+			} else if err := persistSections(st, scope.Sections, true); err != nil {
 				return err
 			}
 

@@ -11,14 +11,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/config"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/store"
+	"github.com/spf13/cobra"
 )
 
 const appName = "laccd-class-search-pp-cli"
+
+type scopeSearchFunc func(context.Context, *rootFlags, string, string, string, string, int) (laccd.ScopeResult, error)
 
 // newLaccdClient builds the LACCD portal client from config (so the verify
 // pipeline's base-URL override is honored) and the root rate-limit flag.
@@ -106,6 +108,88 @@ func persistSections(st *store.Store, secs []laccd.Section, snapshot bool) error
 		}
 	}
 	return nil
+}
+
+// scheduleScopeKey returns the canonical sync_state key for one whole-subject
+// schedule mirror. Direct-catalog rows deliberately do not get their own
+// completeness marker.
+func scheduleScopeKey(college, term, subject string) string {
+	return "sections:" + strings.ToUpper(strings.TrimSpace(college)) + ":" + strings.TrimSpace(term) + ":" + strings.ToUpper(strings.TrimSpace(subject))
+}
+
+// persistCompleteSections stores every section row, its grid-level snapshot,
+// and the marker authorizing future whole-subject local reads in one
+// transaction.
+func persistCompleteSections(st *store.Store, scopeKey string, secs []laccd.Section, marker store.ScopeCompleteness) error {
+	if st == nil {
+		return fmt.Errorf("persist complete sections: nil store")
+	}
+	items := make([]json.RawMessage, 0, len(secs))
+	snapshots := make([]store.SeatSnapshot, 0, len(secs))
+	syncedAt := marker.SyncedAt
+	if syncedAt.IsZero() {
+		syncedAt = time.Now().UTC()
+	}
+	marker.SyncedAt = syncedAt
+	for _, section := range secs {
+		raw, err := json.Marshal(section)
+		if err != nil {
+			return fmt.Errorf("marshal section %s: %w", section.ClassNbr, err)
+		}
+		items = append(items, raw)
+		snapshots = append(snapshots, store.SeatSnapshot{
+			ClassNbr:   section.ClassNbr,
+			College:    section.College,
+			Term:       section.Term,
+			Subject:    section.Subject,
+			Status:     section.Status,
+			ObservedAt: syncedAt,
+		})
+	}
+	return st.SaveCompleteScheduleScope(scopeKey, items, snapshots, marker)
+}
+
+// readCompleteLocalScope reads a whole-subject mirror only when its current
+// completeness marker proves full coverage. The marker's catalog array is the
+// authority for bounded selection, including catalogs that produced no rows.
+func readCompleteLocalScope(ctx context.Context, dbPath, college, term, subject string, maxCourses int) ([]laccd.Section, store.ScopeCompleteness, bool, error) {
+	var marker store.ScopeCompleteness
+	if maxCourses < 0 {
+		return nil, marker, false, fmt.Errorf("maxCourses must be zero or positive, got %d", maxCourses)
+	}
+	st, ok, err := openStoreIfExists(ctx, dbPath)
+	if err != nil || !ok {
+		return nil, marker, false, err
+	}
+	defer st.Close()
+
+	marker, ok, err = st.GetScopeCompleteness(scheduleScopeKey(college, term, subject))
+	if err != nil || !ok {
+		return nil, marker, false, err
+	}
+	selected := marker.Catalogs
+	if maxCourses > 0 && maxCourses < len(selected) {
+		selected = selected[:maxCourses]
+	}
+	selectedSet := make(map[string]bool, len(selected))
+	for _, catalog := range selected {
+		selectedSet[strings.ToUpper(strings.TrimSpace(catalog))] = true
+	}
+
+	secs, err := sectionsFromStore(st, college, term, subject, "")
+	if err != nil {
+		return nil, store.ScopeCompleteness{}, false, err
+	}
+	bounded := make([]laccd.Section, 0, len(secs))
+	for _, section := range secs {
+		if selectedSet[strings.ToUpper(strings.TrimSpace(section.Catalog))] {
+			bounded = append(bounded, section)
+		}
+	}
+	marker.Catalogs = append([]string{}, selected...)
+	marker.CoursesScanned = len(selected)
+	marker.Truncated = marker.CoursesScanned < marker.CoursesTotal
+	return bounded, marker, true, nil
 }
 
 // jsonUnmarshalSection decodes a stored section row, reporting success so

@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
+	"github.com/spf13/cobra"
 )
 
 // searchResult is the search command's JSON envelope. The sections array is a
@@ -29,6 +29,10 @@ type searchResult struct {
 }
 
 func newSearchCmd(flags *rootFlags) *cobra.Command {
+	return newSearchCmdWithScopeSearch(flags, liveSearch)
+}
+
+func newSearchCmdWithScopeSearch(flags *rootFlags, scopeSearch scopeSearchFunc) *cobra.Command {
 	var college, term, subject, catalog, mode, instructor, days, dbPath string
 	var openOnly bool
 	var limit, maxCourses int
@@ -67,6 +71,12 @@ Results are mirrored into the local SQLite store, so later runs with
 			if !laccd.IsCollege(college) {
 				return usageErr(fmt.Errorf("unknown college %q; run '%s colleges' for valid codes", college, appName))
 			}
+			if maxCourses < 0 {
+				return usageErr(fmt.Errorf("--max-courses must be zero or positive, got %d", maxCourses))
+			}
+			if strings.TrimSpace(catalog) == "" && laccd.TermLabel(term) == "" {
+				return usageErr(fmt.Errorf("unsupported term %q for whole-subject schedule search", term))
+			}
 			ctx, cancel := boundCtx(cmd.Context(), flags)
 			defer cancel()
 
@@ -79,24 +89,48 @@ Results are mirrored into the local SQLite store, so later runs with
 
 			switch flags.dataSource {
 			case "local":
-				secs, err := readLocalSearch(ctx, dbPath, college, term, subject, catalog)
-				if err != nil {
-					return err
+				if strings.TrimSpace(catalog) != "" {
+					secs, err := readLocalSearch(ctx, dbPath, college, term, subject, catalog)
+					if err != nil {
+						return err
+					}
+					if secs == nil {
+						missingMirrorHint(cmd, flags, fmt.Sprintf("--college %s --term %s --subject %s", college, term, subject))
+						return nil
+					}
+					result.Sections = applySectionFilters(secs, filters)
+				} else {
+					secs, marker, ok, err := readCompleteLocalScope(ctx, dbPath, college, term, subject, maxCourses)
+					if err != nil {
+						return err
+					}
+					if !ok {
+						return configErr(fmt.Errorf("local mirror for %s %s %s is not complete; run '%s sync --college %s --term %s --subject %s --max-courses 0'", strings.ToUpper(college), term, strings.ToUpper(subject), appName, strings.ToUpper(college), term, strings.ToUpper(subject)))
+					}
+					result.Sections = applySectionFilters(secs, filters)
+					result.ScannedCourses = marker.CoursesScanned
+					result.CoursesTotal = marker.CoursesTotal
+					result.Truncated = marker.Truncated
 				}
-				if secs == nil {
-					missingMirrorHint(cmd, flags, fmt.Sprintf("--college %s --term %s --subject %s", college, term, subject))
-					return nil
-				}
-				result.Sections = applySectionFilters(secs, filters)
 				result.Source = "local"
 			default: // auto, live
-				scope, err := liveSearch(ctx, flags, college, term, subject, catalog, maxCourses)
+				scope, err := scopeSearch(ctx, flags, college, term, subject, catalog, maxCourses)
 				if err != nil {
 					if flags.dataSource == "auto" {
-						if secs, lerr := readLocalSearch(ctx, dbPath, college, term, subject, catalog); lerr == nil && secs != nil {
+						if strings.TrimSpace(catalog) != "" {
+							if secs, lerr := readLocalSearch(ctx, dbPath, college, term, subject, catalog); lerr == nil && secs != nil {
+								fmt.Fprintf(cmd.ErrOrStderr(), "live search failed (%v); serving local mirror\n", err)
+								result.Sections = applySectionFilters(secs, filters)
+								result.Source = "local"
+								break
+							}
+						} else if secs, marker, ok, lerr := readCompleteLocalScope(ctx, dbPath, college, term, subject, maxCourses); lerr == nil && ok {
 							fmt.Fprintf(cmd.ErrOrStderr(), "live search failed (%v); serving local mirror\n", err)
 							result.Sections = applySectionFilters(secs, filters)
 							result.Source = "local"
+							result.ScannedCourses = marker.CoursesScanned
+							result.CoursesTotal = marker.CoursesTotal
+							result.Truncated = marker.Truncated
 							break
 						}
 					}
