@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "id": "ccn-alternate-detection",
+  "applied_at": "2026-08-13",
+  "base_run_id": "20260622-152805-3c5758d8",
+  "base_printing_press_version": "4.25.0",
+  "summary": "Count actual alternates before emitting the 'no alternate subject/catalog number' note, and mark a CCN-formatted catalog number as ccn=true even when its subject is not flagged (CCN).",
+  "reason": "`ccn ENGL 101 --college ELAC --term 2268` returned the correct equivalent (ENGL C1000, 20 sections, 16 open) and then appended a note saying no alternate exists. The guard fired on len(Equivalents) <= 1, which assumes the first row is always the queried course itself; that is false exactly when the portal has already renumbered the course, which is the case this command exists to handle. The row also reported ccn=false because the portal only marks the *subject* as '(CCN)', not the catalog number.",
+  "files": [
+    "internal/cli/ccn.go"
+  ],
+  "validated_outcome": "`ccn ENGL 101 --college ELAC --term 2268` now returns ENGL C1000 with ccn=true and no contradictory note; the note still fires when no alternate subject/catalog exists. Full Go suite passes."
+}

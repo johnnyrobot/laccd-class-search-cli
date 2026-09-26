@@ -7,11 +7,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/cliutil"
 	"github.com/johnnyrobot/laccd-class-search-cli/internal/laccd"
+	"github.com/spf13/cobra"
 )
 
 // ccnEquivalent is one (subject, catalog) that offers the same course title.
@@ -123,7 +124,7 @@ than a hardcoded crosswalk.`, "\n"),
 					}
 					eq := byCatalog[s.Catalog]
 					if eq == nil {
-						eq = &ccnEquivalent{Subject: rs.code, Catalog: s.Catalog, Course: s.Course, Title: s.Title, CCN: rs.ccn}
+						eq = &ccnEquivalent{Subject: rs.code, Catalog: s.Catalog, Course: s.Course, Title: s.Title, CCN: rs.ccn || isCCNCatalog(s.Catalog)}
 						byCatalog[s.Catalog] = eq
 					}
 					eq.Sections++
@@ -136,7 +137,18 @@ than a hardcoded crosswalk.`, "\n"),
 				}
 			}
 
-			if len(result.Equivalents) <= 1 {
+			// An equivalent carrying the queried subject+number is the course
+			// the caller already has; only a different subject or catalog
+			// number is an alternate. Counting rows instead of alternates
+			// contradicted the payload whenever the portal returned the course
+			// under its new CCN number, which is this command's whole point.
+			alternates := 0
+			for _, eq := range result.Equivalents {
+				if !strings.EqualFold(eq.Subject, subject) || !strings.EqualFold(eq.Catalog, number) {
+					alternates++
+				}
+			}
+			if alternates == 0 {
 				result.Note = "no alternate subject/catalog number offers this course this term; the renumbering may not be active yet for this college"
 			}
 			return outputCCN(cmd, flags, result)
@@ -150,6 +162,16 @@ than a hardcoded crosswalk.`, "\n"),
 type relatedSubject struct {
 	code string
 	ccn  bool
+}
+
+// ccnCatalogPattern matches an AB1111 common course number such as C1000.
+// The portal only marks the *subject* as "(CCN)", so a legacy subject that
+// has already been renumbered carries a CCN catalog number under a subject
+// flagged false; matching the number keeps the row's ccn field honest.
+var ccnCatalogPattern = regexp.MustCompile(`^C\d{3,4}$`)
+
+func isCCNCatalog(catalog string) bool {
+	return ccnCatalogPattern.MatchString(strings.ToUpper(strings.TrimSpace(catalog)))
 }
 
 // relatedSubjectCodes returns the subject codes that share a base name with the

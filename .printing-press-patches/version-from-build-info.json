@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "id": "version-from-build-info",
+  "applied_at": "2026-08-13",
+  "base_run_id": "20260622-152805-3c5758d8",
+  "base_printing_press_version": "4.25.0",
+  "summary": "Resolve the reported version from the binary's build info when no -X ldflags stamp is present, so `go install <module>@vX.Y.Z` reports the installed tag.",
+  "reason": "goreleaser stamps internal/cli.version (and main.version for the MCP binary) via -X, but the README's documented `go install` path does not, so every go-installed binary reported the compiled-in default regardless of the tag it was built from. The correct version was already embedded in the binary's build info and simply unread. `var version = ...` is deliberately left untouched -- -X only overwrites a string var with a constant initializer, and the release ledger owns that literal.",
+  "files": [
+    "internal/cli/version.go",
+    "internal/cli/version_pick_test.go",
+    "cmd/laccd-class-search-pp-mcp/main.go"
+  ],
+  "validated_outcome": "Full Go suite passes in all five repos. A goreleaser-style -X ldflags build still reports the stamped version (verified with 9.9.9); an unstamped build now reports the module version from build info (1.0.0+dirty on a modified checkout) instead of the compiled-in default. Before the patch, go-installed binaries carried the correct module version in their build info and ignored it: assist v1.0.1 reported 0.0.0-dev, canvas v1.1.2 and courses v1.0.1 both reported 1.0.0."
+}

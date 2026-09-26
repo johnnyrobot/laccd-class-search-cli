@@ -7,10 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/server"
 	mcptools "github.com/johnnyrobot/laccd-class-search-cli/internal/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 // Transport selection order: --transport flag, then PP_MCP_TRANSPORT env,
@@ -25,6 +26,42 @@ const (
 
 // version is the printed MCP server's version, overridable at build time via ldflags.
 var version = "0.0.0-dev"
+
+// defaultVersion mirrors the literal above. `-X` only overwrites a string var
+// with a constant initializer, so version keeps one; comparing against this
+// copy is how resolveVersion tells a stamped build from an unstamped one.
+const defaultVersion = "0.0.0-dev"
+
+// init promotes the resolved version into version before main() hands it to
+// the MCP server as the advertised server version.
+func init() { version = resolveVersion() }
+
+// resolveVersion prefers the ldflags stamp used by goreleaser releases, then
+// falls back to the module version the toolchain records in the binary.
+// `go install <module>@vX.Y.Z` sets only the latter.
+func resolveVersion() string { return pickVersion(version, moduleVersion()) }
+
+// pickVersion returns stamped when ldflags overrode the compiled-in default,
+// otherwise the module version, otherwise the default. Split out from
+// resolveVersion so the rule is testable without producing a real build.
+func pickVersion(stamped, module string) string {
+	if stamped != defaultVersion {
+		return stamped
+	}
+	if v := strings.TrimPrefix(module, "v"); v != "" && v != "(devel)" {
+		return v
+	}
+	return stamped
+}
+
+// moduleVersion reports the version the toolchain recorded in this binary,
+// empty when it was not built from a module the toolchain could version.
+func moduleVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		return bi.Main.Version
+	}
+	return ""
+}
 
 func main() {
 	s := server.NewMCPServer(
